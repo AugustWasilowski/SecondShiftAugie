@@ -8,7 +8,6 @@ import wave
 import discord
 import openai
 import requests
-import tempfile
 from discord.ext import commands
 from dotenv import load_dotenv
 from elevenlabs import generate, set_api_key
@@ -19,11 +18,14 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
 from langchain import SerpAPIWrapper
 from langchain.agents import initialize_agent, Tool, AgentType
-from langchain.agents import load_tools
 from langchain.llms import OpenAI
 from langchain.memory import ConversationBufferMemory
 from pydub import AudioSegment
 from pytube import YouTube, exceptions as pytube_exceptions
+
+from image import ImageCog
+from llm import LLMCog
+from serp import SerpCog
 from wolfram import WolframAlphaCog
 
 load_dotenv()  # load environment variables from .env file
@@ -112,6 +114,26 @@ async def play_latest_voice_sample():
             logger.error(f'General error in play latest voice sample: {e}')
 
 
+async def working(bot):
+    """sets Second Shift Augie to busy status"""
+    is_busy = True;
+    game = discord.Game("Working... Please hold...")
+    await bot.change_presence(status=discord.Status.do_not_disturb, activity=game)
+    try:
+        voice_client = discord.utils.get(bot.voice_clients)
+        audio_source = discord.FFmpegPCMAudio('GettingDownToBusiness.mp3')
+        if not voice_client.is_playing():
+            voice_client.play(audio_source, after=None)
+    except Exception as e:
+        logger.error(f'General error in working: {e}')
+
+
+async def wait_for_orders(wait_client):
+    """Sets Second Shift Augie to idle status"""
+    game = discord.Game("with some serious sh*t.")
+    await wait_client.change_presence(status=discord.Status.online, activity=game)
+
+
 def get_credentials():
     """Google Drive authentication. Visit https://console.cloud.google.com/apis/credentials and click +CREATE CREDENTIALS"""
     creds = None
@@ -187,27 +209,6 @@ def upload_to_drive(video_file, folder_id=os.getenv('GOOGLE_DRIVE_FOLDER')):
     return file
 
 
-async def wait_for_orders(wait_client):
-    """Sets Second Shift Augie to idle status"""
-    is_busy = False;
-    game = discord.Game("with some serious sh*t.")
-    await wait_client.change_presence(status=discord.Status.online, activity=game)
-
-
-async def working(working_client):
-    """sets Second Shift Augie to busy status"""
-    is_busy = True;
-    game = discord.Game("Working... Please hold...")
-    await working_client.change_presence(status=discord.Status.do_not_disturb, activity=game)
-    try:
-        voice_client = discord.utils.get(bot.voice_clients)
-        audio_source = discord.FFmpegPCMAudio('GettingDownToBusiness.mp3')
-        if not voice_client.is_playing():
-            voice_client.play(audio_source, after=None)
-    except Exception as e:
-        logger.error(f'General error in working: {e}')
-
-
 def progress_func(stream=None, chunk=None, file_handle=None, remaining=None):
     """progress call back function for the Summarize function"""
     logger.info('progressing...')
@@ -226,6 +227,9 @@ async def on_ready():
     logger.info(f'We have logged in as {bot.user} (ID: {bot.user.id}')
     channel = bot.get_channel(int(CHANNEL_ID))
     await bot.add_cog(WolframAlphaCog(bot))
+    await bot.add_cog(SerpCog(bot))
+    await bot.add_cog(LLMCog(bot))
+    await bot.add_cog(ImageCog(bot))
     await wait_for_orders(bot)
     await channel.send(HELP_MSG)
 
@@ -260,88 +264,6 @@ async def play(ctx):
 async def h(ctx):
     """Sends the help/welcome message again"""
     await ctx.send(HELP_MSG)
-
-
-# @bot.command()
-# async def wolf(ctx, *, arg):
-#     """"Sets status then executes Wolfram Alpha query"""
-#     if not is_busy:
-#         await working(bot)
-#         await execute_wolfram_alpha(ctx, arg)
-#         await play_latest_voice_sample()
-#         await wait_for_orders(bot)
-#     else:
-#         await generate_voice_sample("I'm busy at the moment. Please wait.")
-#         await play_latest_voice_sample()
-#
-#
-# async def execute_wolfram_alpha(ctx, arg):
-#     """Executes Wolfram Alpha"""
-#     try:
-#         wolf_llm = OpenAI(temperature=0)
-#         tool_names = ["wolfram-alpha"]
-#         tools = load_tools(tool_names)
-#         agent = initialize_agent(tools, wolf_llm, agent="zero-shot-react-description", verbose=True)
-#         result = agent.run(arg)
-#         await ctx.send(result)
-#         await generate_voice_sample(result)
-#     except Exception as e:
-#         logger.error(f'General error in Wolfram: {e}')
-#         await ctx.send(f'Error in Wolfram: {e}.')
-
-
-@bot.command()
-async def qq(ctx, *, arg):
-    """Sets status and executes SerapApi"""
-    if not is_busy:
-        await working(bot)
-        await exe_serpapi(ctx, arg)
-        await play_latest_voice_sample()
-        await wait_for_orders(bot)
-    else:
-        await generate_voice_sample("I'm busy at the moment. Please wait.")
-        await play_latest_voice_sample()
-
-
-async def exe_serpapi(ctx, arg):
-    """Executes SerapApi"""
-    try:
-        qqllm = OpenAI(temperature=0)
-        tool_names = ["serpapi"]
-        tools = load_tools(tool_names)
-
-        agent = initialize_agent(tools, qqllm, agent="zero-shot-react-description", verbose=True)
-        result = agent.run(arg)
-        await ctx.send(result)
-        await generate_voice_sample(result)
-    except Exception as e:
-        logger.error(f'General error in Serpapi: {e}')
-        await ctx.send(f'Error in Serapi: {e}.')
-
-
-@bot.command()
-async def llm(ctx, *, arg):
-    """Sets status the executes LLM"""
-    if not is_busy:
-        await working(bot)
-        await execute_llm(ctx, arg)
-        await play_latest_voice_sample()
-        await wait_for_orders(bot)
-    else:
-        await generate_voice_sample("I'm busy at the moment. Please wait.")
-        await play_latest_voice_sample()
-
-
-async def execute_llm(ctx, arg):
-    """Executes Generic LLM"""
-    try:
-        lm = OpenAI(temperature=0.9)
-        result = lm(arg)
-        await ctx.send(result)
-        await generate_voice_sample(result)
-    except Exception as e:
-        logger.error(f'General error in LLM: {e}')
-        await ctx.send(f'Error in LLM: {e}.')
 
 
 @bot.command()
@@ -409,6 +331,7 @@ async def pic(ctx, *, args):
         print(e.error)
 
 
+
 @bot.command()
 async def transcribe(ctx, link):
     if not is_busy:
@@ -452,5 +375,4 @@ async def on_message(message):
 
 
 if __name__ == "__main__":
-
     bot.run(BOT_TOKEN)
