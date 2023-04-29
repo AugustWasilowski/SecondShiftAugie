@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import pickle
-import shutil
 import time
 import wave
 
@@ -21,13 +20,11 @@ from googleapiclient.http import MediaFileUpload
 from langchain import SerpAPIWrapper
 from langchain.agents import initialize_agent, Tool, AgentType
 from langchain.agents import load_tools
-from langchain.chains.summarize import load_summarize_chain
-from langchain.document_loaders import YoutubeLoader
 from langchain.llms import OpenAI
 from langchain.memory import ConversationBufferMemory
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from pydub import AudioSegment
 from pytube import YouTube, exceptions as pytube_exceptions
+from wolfram import WolframAlphaCog
 
 load_dotenv()  # load environment variables from .env file
 
@@ -55,7 +52,7 @@ SCOPES = ['https://www.googleapis.com/auth/drive']
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
-use_voice = True
+use_voice = False
 is_busy = False
 
 search = SerpAPIWrapper()
@@ -228,6 +225,7 @@ async def on_ready():
     """we're done setting everything up, let's put out the welcome sign."""
     logger.info(f'We have logged in as {bot.user} (ID: {bot.user.id}')
     channel = bot.get_channel(int(CHANNEL_ID))
+    await bot.add_cog(WolframAlphaCog(bot))
     await wait_for_orders(bot)
     await channel.send(HELP_MSG)
 
@@ -245,7 +243,7 @@ async def join(ctx):
     try:
         voice_client = discord.utils.get(bot.voice_clients)
         audio_source = discord.FFmpegPCMAudio('SecondShiftAugieReportingForDuty.mp3')
-        if not voice_client.is_playing():
+        if not voice_client.is_playing() and use_voice:
             voice_client.play(audio_source, after=None)
     except Exception as e:
         logger.error(f'General error in join: {e}')
@@ -264,32 +262,32 @@ async def h(ctx):
     await ctx.send(HELP_MSG)
 
 
-@bot.command()
-async def wolf(ctx, *, arg):
-    """"Sets status then executes Wolfram Alpha query"""
-    if not is_busy:
-        await working(bot)
-        await execute_wolfram_alpha(ctx, arg)
-        await play_latest_voice_sample()
-        await wait_for_orders(bot)
-    else:
-        await generate_voice_sample("I'm busy at the moment. Please wait.")
-        await play_latest_voice_sample()
-
-
-async def execute_wolfram_alpha(ctx, arg):
-    """Executes Wolfram Alpha"""
-    try:
-        wolf_llm = OpenAI(temperature=0)
-        tool_names = ["wolfram-alpha"]
-        tools = load_tools(tool_names)
-        agent = initialize_agent(tools, wolf_llm, agent="zero-shot-react-description", verbose=True)
-        result = agent.run(arg)
-        await ctx.send(result)
-        await generate_voice_sample(result)
-    except Exception as e:
-        logger.error(f'General error in Wolfram: {e}')
-        await ctx.send(f'Error in Wolfram: {e}.')
+# @bot.command()
+# async def wolf(ctx, *, arg):
+#     """"Sets status then executes Wolfram Alpha query"""
+#     if not is_busy:
+#         await working(bot)
+#         await execute_wolfram_alpha(ctx, arg)
+#         await play_latest_voice_sample()
+#         await wait_for_orders(bot)
+#     else:
+#         await generate_voice_sample("I'm busy at the moment. Please wait.")
+#         await play_latest_voice_sample()
+#
+#
+# async def execute_wolfram_alpha(ctx, arg):
+#     """Executes Wolfram Alpha"""
+#     try:
+#         wolf_llm = OpenAI(temperature=0)
+#         tool_names = ["wolfram-alpha"]
+#         tools = load_tools(tool_names)
+#         agent = initialize_agent(tools, wolf_llm, agent="zero-shot-react-description", verbose=True)
+#         result = agent.run(arg)
+#         await ctx.send(result)
+#         await generate_voice_sample(result)
+#     except Exception as e:
+#         logger.error(f'General error in Wolfram: {e}')
+#         await ctx.send(f'Error in Wolfram: {e}.')
 
 
 @bot.command()
@@ -454,4 +452,5 @@ async def on_message(message):
 
 
 if __name__ == "__main__":
+
     bot.run(BOT_TOKEN)
