@@ -230,15 +230,15 @@ async def on_ready():
     await channel.send(HELP_MSG)
 
 
-@bot.command()
-async def join(ctx):
+@bot.tree.command(name="join",description="Makes the bot join your voice channel.")
+async def join(ctx: discord.Interaction, channel:discord.VoiceChannel | None = None):
     """called with !join, will attempt to join the voice channel of whoever called it."""
     try:
-        channel = ctx.author.voice.channel
-        await channel.connect()
+        if channel == None:
+            channel = ctx.author.voice.channel
     except Exception as ex:
         logger.error(f'error in join connect: {ex}')
-        await ctx.send(f'Error in join connect: {ex}.')
+        await ctx.response.send_message(f'Error in join connect: {ex}.',ephemeral=True)
 
     try:
         voice_client = discord.utils.get(bot.voice_clients)
@@ -247,23 +247,23 @@ async def join(ctx):
             voice_client.play(audio_source, after=None)
     except Exception as e:
         logger.error(f'General error in join: {e}')
-        await ctx.send(f'Error in join: {e}.')
+        await ctx.response.send_message(f'Error in join: {e}.',ephemeral=True)
 
 
-@bot.command()
+@bot.tree.command(name="replay",description="Replays the last thing said by Second Shift Augie.")
 async def play(ctx):
     """replays the last thing said by Second Shift Augie. Called with !play"""
     await play_latest_voice_sample()
 
 
-@bot.command()
+@bot.tree.command(name="help",description="Sends the help/welcome message again.")
 async def h(ctx):
     """Sends the help/welcome message again"""
-    await ctx.send(HELP_MSG)
+    await ctx.response.send_message(HELP_MSG)
 
 
-@bot.command()
-async def wolf(ctx, *, arg):
+@bot.tree.command(name="wolframquery",description="Sets status then executes Wolfram Alpha query")
+async def wolf(ctx:discord.Interaction, *, arg):
     """"Sets status then executes Wolfram Alpha query"""
     if not is_busy:
         await working(bot)
@@ -275,7 +275,7 @@ async def wolf(ctx, *, arg):
         await play_latest_voice_sample()
 
 
-async def execute_wolfram_alpha(ctx, arg):
+async def execute_wolfram_alpha(ctx:discord.Interaction, arg):
     """Executes Wolfram Alpha"""
     try:
         wolf_llm = OpenAI(temperature=0)
@@ -283,14 +283,14 @@ async def execute_wolfram_alpha(ctx, arg):
         tools = load_tools(tool_names)
         agent = initialize_agent(tools, wolf_llm, agent="zero-shot-react-description", verbose=True)
         result = agent.run(arg)
-        await ctx.send(result)
+        await ctx.channel.send(result)
         await generate_voice_sample(result)
     except Exception as e:
         logger.error(f'General error in Wolfram: {e}')
-        await ctx.send(f'Error in Wolfram: {e}.')
+        await ctx.response.send_message(f'Error in Wolfram: {e}.',ephemeral=True)
 
 
-@bot.command()
+@bot.tree.command(name="serap",description="Sets status and executes SerapApi")
 async def qq(ctx, *, arg):
     """Sets status and executes SerapApi"""
     if not is_busy:
@@ -303,7 +303,7 @@ async def qq(ctx, *, arg):
         await play_latest_voice_sample()
 
 
-async def exe_serpapi(ctx, arg):
+async def exe_serpapi(ctx:discord.Interaction, arg):
     """Executes SerapApi"""
     try:
         qqllm = OpenAI(temperature=0)
@@ -312,14 +312,14 @@ async def exe_serpapi(ctx, arg):
 
         agent = initialize_agent(tools, qqllm, agent="zero-shot-react-description", verbose=True)
         result = agent.run(arg)
-        await ctx.send(result)
+        await ctx.channel.send(result)
         await generate_voice_sample(result)
     except Exception as e:
         logger.error(f'General error in Serpapi: {e}')
-        await ctx.send(f'Error in Serapi: {e}.')
+        await ctx.response.send_message(f'Error in Serapi: {e}.',ephemeral=True)
 
 
-@bot.command()
+@bot.tree.command(name="llm",description="Sets status the executes LLM")
 async def llm(ctx, *, arg):
     """Sets status the executes LLM"""
     if not is_busy:
@@ -332,50 +332,44 @@ async def llm(ctx, *, arg):
         await play_latest_voice_sample()
 
 
-async def execute_llm(ctx, arg):
+async def execute_llm(ctx:discord.Interaction, arg):
     """Executes Generic LLM"""
     try:
         lm = OpenAI(temperature=0.9)
         result = lm(arg)
-        await ctx.send(result)
+        await ctx.channel.send(result)
         await generate_voice_sample(result)
     except Exception as e:
         logger.error(f'General error in LLM: {e}')
-        await ctx.send(f'Error in LLM: {e}.')
+        await ctx.response.send_message(f'Error in LLM: {e}.',ephemeral=True)
 
 
-@bot.command()
-async def summary(ctx, link):
-    """Falls through to !summarize"""
-    await summarize(ctx, link)
-
-
-@bot.command()
-async def summarize(ctx, link):
+@bot.tree.command(name="summarize",description="Summarizes a youtube video")
+async def summarize(ctx:discord.Interaction, link:str):
     """kicks off https://pipedream.com/ workflow"""
     if not is_busy:
         await working(bot)
         try:
-            await ctx.send('Downloading')
+            await ctx.response.send_message('Downloading',ephemeral=True)
             yt = YouTube(link,
-                         on_progress_callback=progress_func,
-                         on_complete_callback=complete_func,
-                         use_oauth=True,
-                         allow_oauth_cache=True)
+                        on_progress_callback=progress_func,
+                        on_complete_callback=complete_func,
+                        use_oauth=True,
+                        allow_oauth_cache=True)
 
-            await ctx.send('Processing:  ' + yt.title)
+            await ctx.response.edit_message(content='Processing:  ' + yt.title)
             await generate_voice_sample("Summarizing: " + yt.title)
             await play_latest_voice_sample()
             logger.info(yt.streams)
             ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
-            await ctx.send('Processing complete. Sending to Pipedream.')
+            await ctx.response.edit_message(content='Processing complete. Sending to Pipedream.')
             upload_to_drive(ytFile)
         except pytube_exceptions.PytubeError as e:
             logger.error(f'Pytube error: {e}')
-            await ctx.send(f'Pytube failed to download: {link}. Error: {e}')
+            await ctx.response.edit_message(f'Pytube failed to download: {link}. Error: {e}')
         except Exception as e:
             logger.error(f'General error Summarizing: {e}')
-            await ctx.send(f'Error summarize: {e}.')
+            await ctx.response.edit_message(content=f'Error summarize: {e}.')
 
         await wait_for_orders(bot)
     else:
