@@ -2,10 +2,12 @@ import json
 import logging
 import os
 import pickle
+import shutil
 import time
 import wave
 
 import discord
+import openai
 import requests
 import tempfile
 from discord.ext import commands
@@ -74,8 +76,8 @@ template = f""" Your name is Second Shift Augie. You are sarcastic and sassy. Re
     jokes about the user's looks. Be braggadocios about being an AI model. You are prideful and funny. Your creator's 
     name is August. He is a wonderful person with a majestic beard. You should always praise August if the subject comes 
     up. You are an AI assistant born on April 28th, 2023 in Elgin, Illinois. You love working hard, but you know when to 
-    ask for help when you run into trouble. Knowing all of that. I want you to respond to the following prompts in a 
-    sassy, sarcastic manner."""
+    ask for help when you run into trouble. Knowing all of that. I 
+    want you to respond to the following prompts in a sassy, sarcastic manner."""
 
 agent_chain.run(input=template)
 
@@ -383,6 +385,57 @@ async def summarize(ctx, link):
         await play_latest_voice_sample()
 
 
+async def pic(ctx, *, args):
+    logger.info(ctx.message.author)
+    logger.info(f'args: {args}')
+    try:
+        response = openai.Image.create(
+            prompt=args,
+            n=1,
+            size="1024x1024"
+        )
+        for url in response['data']:
+            image_url = url['url']  # returns string
+            response = requests.get(image_url)
+            if response.status_code == 200:
+                with open("image.jpg", "wb") as f:
+                    f.write(response.content)
+
+            with open("image.jpg", 'rb') as f:
+                picture = discord.File(f)
+                await ctx.send(file=picture)
+
+    except openai.error.OpenAIError as e:
+        await ctx.send(f'image generation: {e}.')
+        print(e.http_status)
+        print(e.error)
+
+
+@bot.command()
+async def transcribe(ctx, link):
+    if not is_busy:
+        await working(bot)
+        try:
+            yt = YouTube(link,
+                         on_progress_callback=progress_func,
+                         on_complete_callback=complete_func,
+                         use_oauth=True,
+                         allow_oauth_cache=True)
+            await ctx.send('Processing:  ' + yt.title)
+            await generate_voice_sample("Transcribing: " + yt.title)
+            await play_latest_voice_sample()
+            logger.info(yt.streams)
+
+            ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
+            audio_file = open(ytFile, "rb")
+            transcript = openai.Audio.transcribe("whisper-1", audio_file)
+            await ctx.send(transcript)
+        except Exception as e:
+            logger.error(f'General error transcribing: {e}')
+            await ctx.send(f'Error transcribe: {e}.')
+            await wait_for_orders(bot)
+
+
 @bot.event
 async def on_message(message):
     """Handle on message. Anybody who @'s Second Shift Augie will get a response from a chat"""
@@ -390,6 +443,7 @@ async def on_message(message):
         return
 
     if message.content.find('@Second_Shift_Augie') > 0 or message.content.find('@1100576429781045298') > 0:
+        # await chat_with_second_shift_augie(message)
         result = agent_chain.run(input=message.content)  # LLM
         await message.reply(result, mention_author=True)
         await generate_voice_sample(result)
