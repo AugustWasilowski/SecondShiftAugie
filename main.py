@@ -135,15 +135,33 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Error: {e}")
 
-    # register cogs
-    for f in os.listdir("./cogs"):
-        if f.endswith(".py"):
-            bot.load_extension("cogs." + f[:-3])
+    await register_cogs()
 
     # finalize on ready by setting status to ready and sending the MOTD
     await wait_for_orders(bot)
     channel = bot.get_channel(int(CHANNEL_ID))
     await channel.send(MOTD)
+
+
+async def register_cogs():
+    # register cogs
+    for f in os.listdir("./cogs"):
+        if f.endswith(".py"):
+            logger.info(f"loaded: {f}")
+            bot.load_extension("cogs." + f[:-3])
+
+
+async def reload_cogs():
+    # register cogs
+    for f in os.listdir("./cogs"):
+        if f.endswith(".py"):
+            logger.info(f"reloaded: {f}")
+            bot.reload_extension("cogs." + f[:-3])
+
+
+@bot.command(name="reload")
+async def reload(ctx):
+    await reload_cogs()
 
 
 @bot.command(name="helpmeaugie")
@@ -263,7 +281,7 @@ async def on_message(message):
 
     if message.guild is not None and message.content is "login" and message.member.permissions.has("ADMINISTRATOR"):
         # url = auth.generateAuthURL("google", message.guild.id, os.getenv("SCOPES_TO_REQUEST"))
-        url =  "https://tinyurl.com/5x2bcwjy"
+        url = "https://tinyurl.com/5x2bcwjy"
         message.channel.send("Please check your DMs for a link to log in.")
         message.member.send(f"Please visit this URL to log in: {url}")
 
