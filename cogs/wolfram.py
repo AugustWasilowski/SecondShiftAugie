@@ -4,6 +4,8 @@ from langchain import OpenAI
 from langchain.agents import load_tools, initialize_agent
 from nextcord.ext import commands
 
+from cogs.status import working, wait_for_orders
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -31,15 +33,19 @@ class WolframAlphaCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.is_busy = False
+        # self.status_cog = self.bot.get_cog(self, 'status')
 
     @commands.command()
     async def wolf(self, ctx, *, arg):
         """"Sets status then executes Wolfram Alpha query"""
         if not self.is_busy:
-            # await self.working(self.bot)
+            await working(self.bot)
             await execute_wolfram_alpha(ctx, arg)
             # await self.play_latest_voice_sample()
-            # await self.wait_for_orders(self.bot)
+            await wait_for_orders(self.bot)
         # else:
         # await self.generate_voice_sample("I'm busy at the moment. Please wait.")
         # await self.play_latest_voice_sample()
+
+    async def set_busy(self, message):
+            await self.status_cog.get_commands(self)

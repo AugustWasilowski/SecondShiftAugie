@@ -4,6 +4,8 @@ from langchain import OpenAI
 from langchain.agents import load_tools, initialize_agent
 from nextcord.ext import commands
 
+from cogs.status import working, wait_for_orders
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -21,13 +23,10 @@ class SerpCog(commands.Cog):
     async def qq(self, ctx, *, arg):
         """Sets status and executes SerapApi"""
         if not self.is_busy:
-            # await working(bot)
+            await working(self.bot)
             await self.exe_serpapi(ctx, arg)
         #     await play_latest_voice_sample()
-        #     await wait_for_orders(bot)
-        # else:
-        #     await generate_voice_sample("I'm busy at the moment. Please wait.")
-        #     await play_latest_voice_sample()
+            await wait_for_orders(self.bot)
 
     async def exe_serpapi(self, ctx, arg):
         """Executes SerapApi"""

@@ -4,6 +4,7 @@ import wave
 
 import nextcord
 import openai
+# from discord import app_commands
 from dotenv import load_dotenv
 from elevenlabs import generate, set_api_key
 from langchain import SerpAPIWrapper
@@ -13,6 +14,9 @@ from langchain.memory import ConversationBufferMemory
 from nextcord.ext import commands
 from pydub import AudioSegment
 from pytube import YouTube, exceptions as pytube_exceptions
+
+from cogs.googlestuff import upload_to_drive
+from cogs.status import wait_for_orders, working
 
 load_dotenv()  # load environment variables from .env file
 
@@ -38,10 +42,11 @@ bot = commands.Bot(command_prefix="!", intents=nextcord.Intents.all())
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 intents = nextcord.Intents.default()
-intents.message_content = True
 client = nextcord.Client(intents=intents)
+# tree = app_commands.CommandTree(client)
+
 use_voice = False
-is_busy = False
+is_augie_busy = False
 
 search = SerpAPIWrapper()
 tools = [
@@ -100,26 +105,6 @@ async def play_latest_voice_sample():
             logger.error(f'General error in play latest voice sample: {e}')
 
 
-async def working(bot):
-    """sets Second Shift Augie to busy status"""
-    is_busy = True;
-    game = nextcord.Game("Working... Please hold...")
-    await bot.change_presence(status=nextcord.Status.do_not_disturb, activity=game)
-    try:
-        voice_client = nextcord.utils.get(bot.voice_clients)
-        audio_source = nextcord.FFmpegPCMAudio('GettingDownToBusiness.mp3')
-        if not voice_client.is_playing():
-            voice_client.play(audio_source, after=None)
-    except Exception as e:
-        logger.error(f'General error in working: {e}')
-
-
-async def wait_for_orders(wait_client):
-    """Sets Second Shift Augie to idle status"""
-    game = nextcord.Game("with some serious sh*t.")
-    await wait_client.change_presence(status=nextcord.Status.online, activity=game)
-
-
 def progress_func(stream=None, chunk=None, file_handle=None, remaining=None):
     """progress call back function for the Summarize function"""
     logger.info('progressing...')
@@ -135,7 +120,7 @@ def complete_func(stream, path):
 @bot.event
 async def on_ready():
     """we're done setting everything up, let's put out the welcome sign."""
-    logger.info(f'We have logged in as {bot.user} (ID: {bot.user.id}. Setting up...')
+    logger.info(f'We have logged in as {bot.user} (ID: {bot.user.id}).')
     try:
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} command(s)")
@@ -198,7 +183,7 @@ async def summary(ctx, link):
 @bot.command()
 async def summarize(ctx, link):
     """kicks off https://pipedream.com/ workflow"""
-    if not is_busy:
+    if not is_augie_busy:
         await working(bot)
         try:
             await ctx.send('Downloading')
@@ -209,18 +194,23 @@ async def summarize(ctx, link):
                          allow_oauth_cache=True)
 
             await ctx.send('Processing:  ' + yt.title)
-            await generate_voice_sample("Summarizing: " + yt.title)
-            await play_latest_voice_sample()
+            if use_voice:
+                await generate_voice_sample("Summarizing: " + yt.title)
+                await play_latest_voice_sample()
+
             logger.info(yt.streams)
-            ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
+
+            stream = yt.streams.filter(only_audio=True).last()
+            logger.info(stream.itag)
+            ytFile = stream.download(SAVE_PATH)
             await ctx.send('Processing complete. Sending to Pipedream.')
 
-            # upload_to_drive(ytFile) # TODO Implement this later
+            upload_to_drive(ytFile)
         except pytube_exceptions.PytubeError as e:
             logger.error(f'Pytube error: {e}')
             await ctx.send(f'Pytube failed to download: {link}. Error: {e}')
         except Exception as e:
-            logger.error(f'General error Summarizing: {e}')
+            logger.error(f'Error Summarizing: {e}')
             await ctx.send(f'Error summarize: {e}.')
 
         await wait_for_orders(bot)
@@ -231,7 +221,7 @@ async def summarize(ctx, link):
 
 @bot.command()
 async def transcribe(ctx, link):
-    if not is_busy:
+    if not is_augie_busy:
         await working(bot)
         try:
             yt = YouTube(link,
@@ -261,11 +251,14 @@ async def on_message(message):
         return
 
     if message.content.find('@Second_Shift_Augie') > 0 or message.content.find('@1100576429781045298') > 0:
+        await working(bot)
         # await chat_with_second_shift_augie(message)
         result = agent_chain.run(input=message.content)  # LLM
         await message.reply(result, mention_author=True)
-        await generate_voice_sample(result)
-        await play_latest_voice_sample()
+        if use_voice:
+            await generate_voice_sample(result)
+            await play_latest_voice_sample()
+        await wait_for_orders(bot)
 
     logger.info(message.content)
     await bot.process_commands(message)
