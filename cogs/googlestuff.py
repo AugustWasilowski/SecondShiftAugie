@@ -78,25 +78,26 @@ def setup(bot: commands.Bot):
     bot.add_cog(GoogleCog(bot))
 
 
+def upload_to_drive(video_file, folder_id=os.getenv('GOOGLE_DRIVE_FOLDER')):
+    """uploads a file to a google drive folder"""
+    try:
+        creds = get_credentials()
+        service = build('drive', 'v3', credentials=creds)
+
+        file_metadata = {
+            'name': os.path.basename(video_file),
+            'parents': [folder_id]
+        }
+        media = MediaFileUpload(video_file, mimetype='video/*')
+        file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+        print(f'File ID: "{file.get("id")}".')
+    except HttpError as error:
+        print(f'An error occurred: {error}')
+        file = None
+    return file
+
+
 class GoogleCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.is_busy = False
-
-    def upload_to_drive(video_file, folder_id=os.getenv('GOOGLE_DRIVE_FOLDER')):
-        """uploads a file to a google drive folder"""
-        try:
-            creds = get_credentials()
-            service = build('drive', 'v3', credentials=creds)
-
-            file_metadata = {
-                'name': os.path.basename(video_file),
-                'parents': [folder_id]
-            }
-            media = MediaFileUpload(video_file, mimetype='video/*')
-            file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-            print(f'File ID: "{file.get("id")}".')
-        except HttpError as error:
-            print(f'An error occurred: {error}')
-            file = None
-        return file

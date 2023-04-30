@@ -1,8 +1,11 @@
 import logging
 
+import nextcord
 import openai
 import requests
 from nextcord.ext import commands
+
+from cogs.status import working, wait_for_orders
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -23,7 +26,7 @@ async def make_pic(ctx, args):
                     f.write(response.content)
 
             with open("../image.jpg", 'rb') as f:
-                picture = discord.File(f)
+                picture = nextcord.File(f)
                 await ctx.send(file=picture)
 
     except openai.error.OpenAIError as e:
@@ -45,4 +48,6 @@ class ImageCog(commands.Cog):
     @commands.command()
     async def pic(self, ctx, arg):
         if not self.is_busy:
+            await working(self.bot)
             await make_pic(ctx, arg)
+            await wait_for_orders(self.bot)
