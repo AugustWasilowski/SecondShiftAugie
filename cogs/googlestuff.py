@@ -90,9 +90,9 @@ def upload_to_drive(video_file, folder_id=os.getenv('GOOGLE_DRIVE_FOLDER')):
         }
         media = MediaFileUpload(video_file, mimetype='video/*')
         file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-        print(f'File ID: "{file.get("id")}".')
+        logger.info(f'File ID: "{file.get("id")}".')
     except HttpError as error:
-        print(f'An error occurred: {error}')
+        logger.error(f'An error occurred: {error}')
         file = None
     return file
 
