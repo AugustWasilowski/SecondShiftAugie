@@ -1,9 +1,8 @@
 import logging
 
-import discord
 import openai
 import requests
-from discord.ext import commands
+from nextcord.ext import commands
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -20,10 +19,10 @@ async def make_pic(ctx, args):
             image_url = url['url']  # returns string
             response = requests.get(image_url)
             if response.status_code == 200:
-                with open("image.jpg", "wb") as f:
+                with open("../image.jpg", "wb") as f:
                     f.write(response.content)
 
-            with open("image.jpg", 'rb') as f:
+            with open("../image.jpg", 'rb') as f:
                 picture = discord.File(f)
                 await ctx.send(file=picture)
 
@@ -32,6 +31,10 @@ async def make_pic(ctx, args):
         logger.error(e)
         logger.error(e.http_status)
         logger.error(e.error)
+
+
+def setup(bot: commands.Bot):
+    bot.add_cog(ImageCog(bot))
 
 
 class ImageCog(commands.Cog):

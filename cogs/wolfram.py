@@ -1,8 +1,8 @@
 import logging
 
-from discord.ext import commands
 from langchain import OpenAI
 from langchain.agents import load_tools, initialize_agent
+from nextcord.ext import commands
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -23,6 +23,10 @@ async def execute_wolfram_alpha(ctx, arg):
         await ctx.send(f'Error in Wolfram: {e}.')
 
 
+def setup(bot: commands.Bot):
+    bot.add_cog(WolframAlphaCog(bot))
+
+
 class WolframAlphaCog(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -39,4 +43,3 @@ class WolframAlphaCog(commands.Cog):
         # else:
         # await self.generate_voice_sample("I'm busy at the moment. Please wait.")
         # await self.play_latest_voice_sample()
-

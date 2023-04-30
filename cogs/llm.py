@@ -1,7 +1,7 @@
 import logging
 
-from discord.ext import commands
 from langchain import OpenAI
+from nextcord.ext import commands
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -17,6 +17,10 @@ async def execute_llm(ctx, arg):
     except Exception as e:
         logger.error(f'Error in LLM: {e}')
         await ctx.send(f'Error in LLM: {e}.')
+
+
+def setup(bot: commands.Bot):
+    bot.add_cog(LLMCog(bot))
 
 
 class LLMCog(commands.Cog):
