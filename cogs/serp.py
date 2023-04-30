@@ -1,11 +1,15 @@
 import logging
 
-from discord.ext import commands
 from langchain import OpenAI
 from langchain.agents import load_tools, initialize_agent
+from nextcord.ext import commands
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def setup(bot: commands.Bot):
+    bot.add_cog(SerpCog(bot))
 
 
 class SerpCog(commands.Cog):
