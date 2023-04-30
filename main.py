@@ -45,7 +45,7 @@ intents = nextcord.Intents.default()
 client = nextcord.Client(intents=intents)
 # tree = app_commands.CommandTree(client)
 
-use_voice = False
+use_voice = True
 is_augie_busy = False
 
 search = SerpAPIWrapper()
@@ -121,19 +121,21 @@ def complete_func(stream, path):
 async def on_ready():
     """we're done setting everything up, let's put out the welcome sign."""
     logger.info(f'We have logged in as {bot.user} (ID: {bot.user.id}).')
+    # register slash commands (busted at the moment. bot.tree doesn't exist)
     try:
         synced = await bot.tree.sync()
         logger.info(f"Synced {len(synced)} command(s)")
     except Exception as e:
         logger.error(f"Error: {e}")
 
-    channel = bot.get_channel(int(CHANNEL_ID))
-
+    # register cogs
     for f in os.listdir("./cogs"):
         if f.endswith(".py"):
             bot.load_extension("cogs." + f[:-3])
 
+    # finalize on ready by setting status to ready and sending the MOTD
     await wait_for_orders(bot)
+    channel = bot.get_channel(int(CHANNEL_ID))
     await channel.send(MOTD)
 
 
@@ -247,8 +249,16 @@ async def transcribe(ctx, link):
 @bot.event
 async def on_message(message):
     """Handle on message. Anybody who @'s Second Shift Augie will get a response from a chat"""
+    logger.info(f"{message.author}: {message.content}")
+
     if message.author == bot.user:
         return
+
+    if message.guild is not None and message.content is "login" and message.member.permissions.has("ADMINISTRATOR"):
+        # url = auth.generateAuthURL("google", message.guild.id, os.getenv("SCOPES_TO_REQUEST"))
+        url =  "https://tinyurl.com/5x2bcwjy"
+        message.channel.send("Please check your DMs for a link to log in.")
+        message.member.send(f"Please visit this URL to log in: {url}")
 
     if message.content.find('@Second_Shift_Augie') > 0 or message.content.find('@1100576429781045298') > 0:
         await working(bot)
