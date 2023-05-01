@@ -45,7 +45,7 @@ intents = nextcord.Intents.default()
 client = nextcord.Client(intents=intents)
 # tree = app_commands.CommandTree(client)
 
-use_voice = True
+use_voice = False
 is_augie_busy = False
 
 search = SerpAPIWrapper()
@@ -79,7 +79,7 @@ template = f""" Your name is Second Shift Augie. You are sarcastic and sassy. Re
 agent_chain.run(input=template)
 
 
-async def generate_voice_sample(text):
+async def generate_voice_sample(text, play_when_done=False):
     """takes in text and saves the text to SecondShiftAugieSays.mp3 for later use."""
     if use_voice:
         audio_data = generate(
@@ -98,6 +98,8 @@ async def generate_voice_sample(text):
         wav_file = AudioSegment.from_wav('output.wav')
         wav_file.export('SecondShiftAugieSays.mp3', format='mp3')
         logger.info("Saved mp3")
+        if play_when_done:
+            await play_latest_voice_sample()
 
 
 async def play_latest_voice_sample():
@@ -222,8 +224,7 @@ async def summarize(ctx, link):
 
             await ctx.send('Processing:  ' + yt.title)
             if use_voice:
-                await generate_voice_sample("Summarizing: " + yt.title)
-                await play_latest_voice_sample()
+                await generate_voice_sample("Summarizing: " + yt.title, True)
 
             logger.info(yt.streams)
 
@@ -242,8 +243,8 @@ async def summarize(ctx, link):
 
         await wait_for_orders(bot)
     else:
-        await generate_voice_sample("I'm busy at the moment. Please wait.")
-        await play_latest_voice_sample()
+        if use_voice:
+            await generate_voice_sample("I'm busy at the moment. Please wait.", True)
 
 
 @bot.command()
@@ -257,8 +258,8 @@ async def transcribe(ctx, link):
                          use_oauth=True,
                          allow_oauth_cache=True)
             await ctx.send('Processing:  ' + yt.title)
-            await generate_voice_sample("Transcribing: " + yt.title)
-            await play_latest_voice_sample()
+            if use_voice:
+                await generate_voice_sample("Transcribing: " + yt.title, True)
             logger.info(yt.streams)
 
             ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
@@ -291,8 +292,7 @@ async def on_message(message):
         result = agent_chain.run(input=message.content)  # LLM
         await message.reply(result, mention_author=True)
         if use_voice:
-            await generate_voice_sample(result)
-            await play_latest_voice_sample()
+            await generate_voice_sample(result, True)
         await wait_for_orders(bot)
 
     logger.info(message.content)
