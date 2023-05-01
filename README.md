@@ -8,10 +8,11 @@ Second Shift Augie is a sassy and sarcastic AI assistant that helps answer quest
 - Answer questions using Wolfram Alpha
 - Provide quick answers about current events using SerpAPI
 - Interact with a one-shot language model (LLM)
+- Act as a chatbot with memory.  
 
 ## Dependencies
 
-- `discord.py`
+- `nextcord`
 - `dotenv`
 - `requests`
 - `google-auth`
@@ -20,6 +21,7 @@ Second Shift Augie is a sassy and sarcastic AI assistant that helps answer quest
 - `pydub`
 - `langchain`
 - `elevenlabs`
+- `cogs`
 
 ## Setup
 
@@ -49,6 +51,9 @@ SERPAPI_API_KEY=<your_serpapi_key>
 - `!wolf <QUERY>`: Answer questions using Wolfram Alpha.
 - `!qq <QUERY>`: Provide quick answers about current events using SerpAPI.
 - `!llm <QUERY>`: Interact with a one-shot LLM.
+- `!ss <YOUTUBE VIDEO ID>`: Summarizes a SHORT YouTube video. 
+- `!ls <YOUTUBE VIDEO ID>`: Summarized a LONG YouTube Video
+- `!pic <QUERY>`: Calls DALL-E for image generation.
 - `!summarize <YOUTUBE LINK>`: Summarize the given YouTube video.
 
 ## Usage
