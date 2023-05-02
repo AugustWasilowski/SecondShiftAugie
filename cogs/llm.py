@@ -1,11 +1,13 @@
 import logging
 
-from langchain import OpenAI
 from nextcord.ext import commands
 
 from cogs.status import working, wait_for_orders
+from langchain import OpenAI
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -17,8 +19,8 @@ async def execute_llm(ctx, arg):
         await ctx.send(result)
     #        await generate_voice_sample(result)
     except Exception as e:
-        logger.error(f'Error in LLM: {e}')
-        await ctx.send(f'Error in LLM: {e}.')
+        logger.error(f"Error in LLM: {e}")
+        await ctx.send(f"Error in LLM: {e}.")
 
 
 def setup(bot: commands.Bot):
@@ -26,7 +28,6 @@ def setup(bot: commands.Bot):
 
 
 class LLMCog(commands.Cog):
-
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
         self.is_busy = False
@@ -37,5 +38,5 @@ class LLMCog(commands.Cog):
         if not self.is_busy:
             await working(self.bot)
             await execute_llm(ctx, arg)
-    #        await play_latest_voice_sample()
+            #        await play_latest_voice_sample()
             await wait_for_orders(self.bot)
