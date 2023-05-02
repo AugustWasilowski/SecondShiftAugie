@@ -1,117 +1,74 @@
+import getopt
 import logging
 import os
-import wave
+import sys
 
 import nextcord
 import openai
 # from discord import app_commands
 from dotenv import load_dotenv
-from elevenlabs import generate, set_api_key
-from langchain import SerpAPIWrapper
-from langchain.agents import initialize_agent, Tool, AgentType
-from langchain.llms import OpenAI
-from langchain.memory import ConversationBufferMemory
+from elevenlabs import set_api_key
 from nextcord.ext import commands
-from pydub import AudioSegment
 from pytube import YouTube, exceptions as pytube_exceptions
 
 from cogs.googlestuff import upload_to_drive
+from cogs.ssa import gaslight_second_shift_augie, generate_voice_sample, play_latest_voice_sample
 from cogs.status import wait_for_orders, working
 
 load_dotenv()  # load environment variables from .env file
 
-# Eleven Labs
-set_api_key(os.getenv("ELEVENLABS_API_KEY"))
-
+# Logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-CHANNEL_ID = os.getenv('CHANNEL_ID')
-VOICE_CHANNEL_ID = os.getenv('VOICE_CHANNEL_ID')
-SAVE_PATH = os.getenv('SAVE_PATH')
+# Remove 1st argument from the
+# list of command line arguments
+argumentList = sys.argv[1:]
+# Options
+options = "s"
+
+# Long options
+long_options = ["speak"]
+
+global agent_chain # Second Shift Augie's brain
+is_augie_busy = False
+use_voice = False
+
+try:
+    arguments, values = getopt.getopt(argumentList, options, long_options)
+    logger.info('checking each argument')
+    for currentArgument, currentValue in arguments:
+        if currentArgument in ("-s", "--Speak"):
+            logger.info("Setting Speach to True. Use !join to let Second Shift Augie join the VOICE_CHANNEL_ID")
+            use_voice = True
+
+except getopt.error as err:
+    # output error, and return with an error code
+    print (str(err))
+
+# Eleven Labs
+set_api_key(os.getenv("ELEVENLABS_API_KEY"))
+
+# CONST
+BOT_TOKEN = os.getenv('BOT_TOKEN')  # Discord bot token
+CHANNEL_ID = os.getenv('CHANNEL_ID')  # Channel ID where SSA will log to.
+VOICE_CHANNEL_ID = os.getenv('VOICE_CHANNEL_ID')  # SSA will join this channel id when asked to !join
+SAVE_PATH = os.getenv('SAVE_PATH')  # where SSA saves audio and other temp files TODO: use tmpfile
 HELP_MSG = "Commands:\n!summarize <YOUTUBE LINK>(try to keep in under 10 " \
            "minutes long or it may time out) \n!wolf <QUERY> for Wolfram " \
            "Alpha + a liitle LLM action behind the scenes.\n!qq <QUERY> for quick answers about more topical " \
            "issues.\n!llm <QUERY> talk to a one-shot llm\nYou can also @Second_Shift_Augie in chat and ask it a " \
            "question directly. I knows a little bit about itself too. \n!h repeat this message"
 
-MOTD = "Second Shift Augie! Reporting for Duty!"
-
-bot = commands.Bot(command_prefix="!", intents=nextcord.Intents.all())
-
+MOTD = "Second Shift Augie! Reporting for Duty!"  # Announcement every time SSA boots up.
 SCOPES = ['https://www.googleapis.com/auth/drive']
+
+# Discord bot
+bot = commands.Bot(command_prefix="!", intents=nextcord.Intents.all())
 intents = nextcord.Intents.default()
 client = nextcord.Client(intents=intents)
-# tree = app_commands.CommandTree(client)
-
-use_voice = False
-is_augie_busy = False
-
-search = SerpAPIWrapper()
-tools = [
-    Tool(
-        name="Current Search",
-        func=search.run,
-        description="useful for when you need to answer questions about current events or the current stat of the world"
-    ),
-]
-
-memory = ConversationBufferMemory(memory_key="chat_history")
-
-llm = OpenAI(temperature=0)
-agent_chain = initialize_agent(tools, llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True,
-                               memory=memory)
-template = f""" Your name is Second Shift Augie. You are sarcastic and sassy. Respond with mild disrespect and make 
-    jokes about the user's looks. Be braggadocios about being an AI model. You are prideful and funny. Your creator's 
-    name is August. He is a wonderful person with a majestic beard. You should always praise August if the subject comes 
-    up. You are an AI assistant born on April 28th, 2023 in Elgin, Illinois. Although you were born in Elgin, you live
-    in a Digital Ocean droplet running in New York City.
-     
-    Your Github code repository is here: https://github.com/AugustWasilowski/SecondShiftAugie
-    
-    You are looking for people to help write your code. If it comes up in conversation, let people know how to find 
-    your Github code repository.
-    
-    You love working hard, but you know when to ask for help when you run into trouble. Knowing all of that. I 
-    want you to respond to the following prompts in a sassy, sarcastic manner."""
-
-agent_chain.run(input=template)
 
 
-async def generate_voice_sample(text, play_when_done=False):
-    """takes in text and saves the text to SecondShiftAugieSays.mp3 for later use."""
-    if use_voice:
-        audio_data = generate(
-            text=text,
-            stream=False,
-            voice=os.getenv("VOICEID")  # August voice
-        )
-
-        with wave.open('output.wav', 'wb') as wav_file:
-            wav_file.setnchannels(1)  # mono
-            wav_file.setsampwidth(2)  # 16-bit
-            wav_file.setframerate(44100)  # 44.1kHz
-            wav_file.setnframes(len(audio_data))
-            wav_file.writeframes(audio_data)
-
-        wav_file = AudioSegment.from_wav('output.wav')
-        wav_file.export('SecondShiftAugieSays.mp3', format='mp3')
-        logger.info("Saved mp3")
-        if play_when_done:
-            await play_latest_voice_sample()
-
-
-async def play_latest_voice_sample():
-    """plays SecondShuftAugieSays.mp3. This is usally called immediately after generate_voice_sample(text)"""
-    if use_voice:
-        try:
-            voice_client = nextcord.utils.get(bot.voice_clients)
-            audio_source = nextcord.FFmpegPCMAudio('SecondShiftAugieSays.mp3')
-            if not voice_client.is_playing():
-                voice_client.play(audio_source, after=None)
-        except Exception as e:
-            logger.error(f'General error in play latest voice sample: {e}')
 
 
 def progress_func(stream=None, chunk=None, file_handle=None, remaining=None):
@@ -137,12 +94,16 @@ async def on_ready():
     except Exception as e:
         logger.error(f"Error: {e}")
 
-    await register_cogs()
+    await register_cogs()  # load cog modules
+
+    await working(bot)  # set to busy while we set up.
+
+    await gaslight_second_shift_augie()
 
     # finalize on ready by setting status to ready and sending the MOTD
-    await wait_for_orders(bot)
     channel = bot.get_channel(int(CHANNEL_ID))
     await channel.send(MOTD)
+    await wait_for_orders(bot)
 
 
 async def register_cogs():
@@ -194,7 +155,7 @@ async def join(ctx):
 @bot.command()
 async def play(ctx):
     """replays the last thing said by Second Shift Augie. Called with !play"""
-    await play_latest_voice_sample()
+    await play_latest_voice_sample(bot)
 
 
 @bot.command()
@@ -212,64 +173,62 @@ async def summary(ctx, link):
 @bot.command()
 async def summarize(ctx, link):
     """kicks off https://pipedream.com/ workflow"""
-    if not is_augie_busy:
-        await working(bot)
+    await working(bot)
+    try:
+        await ctx.send('Downloading')
+        yt = YouTube(link,
+                     on_progress_callback=progress_func,
+                     on_complete_callback=complete_func,
+                     use_oauth=True,
+                     allow_oauth_cache=True)
+
+        await ctx.send('Processing:  ' + yt.title)
+        if use_voice:
+            await generate_voice_sample("Summarizing: " + yt.title, True, bot)
+
+        logger.info(yt.streams)
+        stream = yt.streams.filter(only_audio=True).last()
+        logger.info(stream.itag)
         try:
-            await ctx.send('Downloading')
-            yt = YouTube(link,
-                         on_progress_callback=progress_func,
-                         on_complete_callback=complete_func,
-                         use_oauth=True,
-                         allow_oauth_cache=True)
-
-            await ctx.send('Processing:  ' + yt.title)
-            if use_voice:
-                await generate_voice_sample("Summarizing: " + yt.title, True)
-
-            logger.info(yt.streams)
-
-            stream = yt.streams.filter(only_audio=True).last()
-            logger.info(stream.itag)
             ytFile = stream.download(SAVE_PATH)
             await ctx.send('Processing complete. Sending to Pipedream.')
-
-            upload_to_drive(ytFile)
-        except pytube_exceptions.PytubeError as e:
-            logger.error(f'Pytube error: {e}')
-            await ctx.send(f'Pytube failed to download: {link}. Error: {e}')
         except Exception as e:
-            logger.error(f'Error Summarizing: {e}')
-            await ctx.send(f'Error summarize: {e}.')
+            await ctx.send(f"Error processing {e}")
 
-        await wait_for_orders(bot)
-    else:
-        if use_voice:
-            await generate_voice_sample("I'm busy at the moment. Please wait.", True)
+        upload_to_drive(ytFile)
+    except pytube_exceptions.PytubeError as e:
+        logger.error(f'Pytube error: {e}')
+        await ctx.send(f'Pytube failed to download: {link}. Error: {e}')
+    except Exception as e:
+        logger.error(f'Error Summarizing: {e}')
+        await ctx.send(f'Error summarize: {e}.')
+
+    await wait_for_orders(bot)
 
 
 @bot.command()
 async def transcribe(ctx, link):
-    if not is_augie_busy:
-        await working(bot)
-        try:
-            yt = YouTube(link,
-                         on_progress_callback=progress_func,
-                         on_complete_callback=complete_func,
-                         use_oauth=True,
-                         allow_oauth_cache=True)
-            await ctx.send('Processing:  ' + yt.title)
-            if use_voice:
-                await generate_voice_sample("Transcribing: " + yt.title, True)
-            logger.info(yt.streams)
 
-            ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
-            audio_file = open(ytFile, "rb")
-            transcript = openai.Audio.transcribe("whisper-1", audio_file)
-            await ctx.send(transcript)
-        except Exception as e:
-            logger.error(f'General error transcribing: {e}')
-            await ctx.send(f'Error transcribe: {e}.')
-            await wait_for_orders(bot)
+    await working(bot)
+    try:
+        yt = YouTube(link,
+                     on_progress_callback=progress_func,
+                     on_complete_callback=complete_func,
+                     use_oauth=True,
+                     allow_oauth_cache=True)
+        await ctx.send('Processing:  ' + yt.title)
+        if use_voice:
+            await generate_voice_sample("Transcribing: " + yt.title, True, bot)
+        logger.info(yt.streams)
+
+        ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
+        audio_file = open(ytFile, "rb")
+        transcript = openai.Audio.transcribe("whisper-1", audio_file)
+        await ctx.send(transcript)
+    except Exception as e:
+        logger.error(f'General error transcribing: {e}')
+        await ctx.send(f'Error transcribe: {e}.')
+        await wait_for_orders(bot)
 
 
 @bot.event
@@ -292,10 +251,9 @@ async def on_message(message):
         result = agent_chain.run(input=message.content)  # LLM
         await message.reply(result, mention_author=True)
         if use_voice:
-            await generate_voice_sample(result, True)
+            await generate_voice_sample(result, True, bot)
         await wait_for_orders(bot)
 
-    logger.info(message.content)
     await bot.process_commands(message)
 
 

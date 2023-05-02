@@ -7,10 +7,9 @@ import time
 import requests
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload
 from nextcord.ext import commands
+from pydrive.auth import GoogleAuth
+from pydrive.drive import GoogleDrive
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -80,21 +79,46 @@ def setup(bot: commands.Bot):
 
 def upload_to_drive(video_file, folder_id=os.getenv('GOOGLE_DRIVE_FOLDER')):
     """uploads a file to a google drive folder"""
-    try:
-        creds = get_credentials()
-        service = build('drive', 'v3', credentials=creds)
+    logger.info(f"uploading: {os.path.basename(video_file)}-{video_file}")
+    gauth = GoogleAuth()
+    # Try to load saved client credentials
+    gauth.LoadCredentialsFile("mycreds.txt")
+    if gauth.credentials is None:
+        # Authenticate if they're not there
+        gauth.LocalWebserverAuth()
+    elif gauth.access_token_expired:
+        # Refresh them if expired
+        gauth.Refresh()
+    else:
+        # Initialize the saved creds
+        gauth.Authorize()
+    # Save the current credentials to a file
+    gauth.SaveCredentialsFile("mycreds.txt")
 
-        file_metadata = {
-            'name': os.path.basename(video_file),
-            'parents': [folder_id]
-        }
-        media = MediaFileUpload(video_file, mimetype='video/*')
-        file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
-        logger.info(f'File ID: "{file.get("id")}".')
-    except HttpError as error:
-        logger.error(f'An error occurred: {error}')
-        file = None
-    return file
+    gdrive = GoogleDrive(gauth)
+
+    gdrive = gdrive.CreateFile({'title': os.path.basename(video_file)})
+    gdrive.SetContentFile(video_file)
+    gdrive.Upload()
+    logger.info(f"{gdrive}")
+
+    # return gdrive
+
+    # try:
+    #     creds = get_credentials()
+    #     service = build('drive', 'v3', credentials=creds)
+    #
+    #     file_metadata = {
+    #         'name': os.path.basename(video_file),
+    #         'parents': [folder_id]
+    #     }
+    #     media = MediaFileUpload(video_file, mimetype='video/*')
+    #     file = service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    #     logger.info(f'File ID: "{file.get("id")}".')
+    # except HttpError as error:
+    #     logger.error(f'An error occurred: {error}')
+    #     file = None
+    # return file
 
 
 class GoogleCog(commands.Cog):

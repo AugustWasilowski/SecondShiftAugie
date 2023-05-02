@@ -6,6 +6,7 @@ from langchain.document_loaders import YoutubeLoader
 from langchain.llms import OpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from nextcord.ext import commands
+from pytube import YouTube
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -49,18 +50,17 @@ class LangChainCog(commands.Cog):
     async def ss(self, ctx, *, arg):
         # Summary for SHORT YouTube videos. Must be the video ID, not the whole URL. i.e. "g8LlwlCU0EA" not
         # "https://youtu.be/g8LlwlCU0EA"
-        arg.replace("https://youtu.be/", "")
-        arg.replace("https://www.youtube.com/watch?v=", "")
-        # await working(commands)
-        await exe_ss(ctx, arg)
-        # await wait_for_orders(commands)
+        yt = YouTube(arg)
+        # await status.working(ctx)
+        await exe_ss(ctx, yt.video_id)
+        # await status.wait_for_orders(ctx)
 
     @commands.command()
     async def ls(self, ctx, *, arg):
         # Summary for SHORT YouTube videos. Must be the video ID, not the whole URL. i.e. "g8LlwlCU0EA" not
         # "https://youtu.be/g8LlwlCU0EA"
-        arg.replace("https://youtu.be/", "")
-        arg.replace("https://www.youtube.com/watch?v=", "")
-        # await working(commands)
-        await exe_ls(ctx, arg)
-        # await wait_for_orders(commands)
+        yt = YouTube(arg)
+
+        # await status.working(ctx)
+        await exe_ls(ctx, yt.video_id)
+        # await status.wait_for_orders(ctx)
