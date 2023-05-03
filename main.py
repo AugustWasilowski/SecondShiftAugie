@@ -29,8 +29,9 @@ HELP_MSG = (
     "Commands:\n!summarize <YOUTUBE LINK>(try to keep in under 10 "
     "minutes long or it may time out) \n!wolf <QUERY> for Wolfram "
     "Alpha + a liitle LLM action behind the scenes.\n!qq <QUERY> for quick answers about more topical "
-    "issues.\n!llm <QUERY> talk to a one-shot llm\nYou can also @Second_Shift_Augie in chat and ask it a "
-    "question directly. I knows a little bit about itself too. \n!h repeat this message"
+    "issues.\n!llm <QUERY> talk to a one-shot llm\n!selfreflect Ask Second Shift Augie about its own code!\n"
+    "You can also @Second_Shift_Augie in chat and ask it a question directly. I knows a little bit about"
+    " itself too. \n!h repeat this message"
 )
 
 MOTD = (
