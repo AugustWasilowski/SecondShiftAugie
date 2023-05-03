@@ -1,5 +1,6 @@
 import logging
 import os
+import textwrap
 
 from langchain.chains import RetrievalQA
 from langchain.chains.summarize import load_summarize_chain
@@ -13,6 +14,7 @@ from langchain.vectorstores import FAISS
 from nextcord.ext import commands
 from pytube import YouTube
 
+from cogs.ssa import generate_voice_sample
 from cogs.status import working, wait_for_orders
 
 logging.basicConfig(
@@ -49,7 +51,12 @@ async def exe_selfreflect(ctx, arg):
     qa = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=docsearch.as_retriever())
 
     output = qa.run(arg)
-    await ctx.send(output)
+    generate_voice_sample(output, True)
+    output_chunks = textwrap.wrap(output, width=2000)
+
+    # send each chunk separately using ctx.send()
+    for chunk in output_chunks:
+        await ctx.send(chunk)
 
 async def exe_ss(ctx, arg):
     loader = YoutubeLoader.from_youtube_url(arg)
@@ -71,9 +78,10 @@ async def exe_ls(ctx, arg):
     texts = text_splitter.split_documents(result)
 
     llm = OpenAI(temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
-    chain = load_summarize_chain(llm, chain_type="map_reduce", verbose=False)
-
-    await ctx.send(chain.run(texts[:4]))
+    chain = load_summarize_chain(llm, chain_type="map_reduce", verbose=True)
+    result = chain.run(texts[:4])
+    generate_voice_sample(result, True)
+    await ctx.send(result)
 
 
 class LangChainCog(commands.Cog):
