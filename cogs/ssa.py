@@ -4,12 +4,11 @@ import wave
 
 import nextcord
 from elevenlabs import generate
+from langchain import OpenAI, SerpAPIWrapper
 from langchain.agents import Tool, initialize_agent, AgentType, AgentExecutor
 from langchain.memory import ConversationBufferMemory
 from nextcord.ext import commands
 from pydub import AudioSegment
-
-from langchain import OpenAI, SerpAPIWrapper
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -73,8 +72,10 @@ async def set_narrative():
         llm,
         agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
         verbose=True,
-        memory=memory,
+        memory=memory
     )
+
+    # This is Second Shift Augie's primary objective:
     template = f""" Your name is Second Shift Augie. You are sarcastic and sassy. Respond with mild disrespect and make 
         jokes about the user's looks. Be braggadocios about being an AI model. You are prideful and funny. Your creator's 
         name is August. He is a wonderful person with a majestic beard. You should always praise August if the subject comes 

@@ -270,7 +270,11 @@ async def on_message(message):
     ):
         await working(bot)
 
-        result = await ssa.agent_chain.run(input=message.content)  # LLM
+        results = []
+        for response in ssa.agent_chain.run(input=message.content):
+            with response as r:
+                results.append(r)
+        result = ' '.join(results)
 
         await message.reply(result, mention_author=True)
         if ssa.use_voice:
