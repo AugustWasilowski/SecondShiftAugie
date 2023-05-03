@@ -273,9 +273,8 @@ async def on_message(message):
 
         results = []
         for response in ssa.agent_chain.run(input=message.content):
-            with response as r:
-                results.append(r)
-        result = ' '.join(results)
+            results.append(response)
+        result = ''.join(results)
 
         await message.reply(result, mention_author=True)
         if ssa.use_voice:
