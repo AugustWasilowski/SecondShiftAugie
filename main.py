@@ -123,12 +123,12 @@ async def on_ready():
     await register_cogs()  # load cog modules
     await working(bot)  # set to busy while we set up.
 
-    # Set the narrative for the SSAWrapper instance
-    await ssa.set_narrative()
-
     # finalize on ready by setting status to ready and sending the MOTD
     channel = bot.get_channel(int(CHANNEL_ID))
+    # Set the narrative for the SSAWrapper instance
     await channel.send(MOTD)
+    await channel.send(await ssa.set_narrative())
+
     await wait_for_orders(bot)
 
 
@@ -256,9 +256,9 @@ async def on_message(message):
         return
 
     if (
-        message.guild is not None
-        and message.content is "login"
-        and message.member.permissions.has("ADMINISTRATOR")
+            message.guild is not None
+            and message.content is "login"
+            and message.member.permissions.has("ADMINISTRATOR")
     ):
         # url = auth.generateAuthURL("google", message.guild.id, os.getenv("SCOPES_TO_REQUEST"))
         url = "https://tinyurl.com/5x2bcwjy"
@@ -266,8 +266,8 @@ async def on_message(message):
         message.member.send(f"Please visit this URL to log in: {url}")
 
     if (
-        message.content.find("@Second_Shift_Augie") > 0
-        or message.content.find("@1100576429781045298") > 0
+            message.content.find("@Second_Shift_Augie") > 0
+            or message.content.find("@1100576429781045298") > 0
     ):
         await working(bot)
 

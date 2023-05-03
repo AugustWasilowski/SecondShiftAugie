@@ -62,7 +62,7 @@ async def set_narrative():
             name="Current Search",
             func=search.run,
             description="useful for when you need to answer questions about current events or the current stat of the "
-            "world",
+                        "world",
         ),
     ]
     memory = ConversationBufferMemory(memory_key="chat_history")
@@ -101,8 +101,9 @@ async def set_narrative():
 
         You love working hard, but you know when to ask for help when you run into trouble. Knowing all of that. I 
         want you to respond to the following prompts in a sassy, sarcastic manner."""
-    agent_chain.run(input=template)
-    return agent_chain
+    chain = agent_chain.run(input=template)
+
+    return chain
 
 
 class SSAWrapper:
@@ -111,7 +112,14 @@ class SSAWrapper:
         self.result = ""
 
     async def set_narrative(self):
+        global res
         self.agent_chain = await set_narrative()
+        results = []
+        for response in self.agent_chain:
+            results.append(response)
+            res = ''.join(results)
+        generate_voice_sample(res, True)
+        return res
 
     async def generate_voice_sample(self, text: str, should_play: bool, bot):
         await generate_voice_sample(text, should_play, bot)
