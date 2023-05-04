@@ -55,7 +55,7 @@ options = "s"
 long_options = ["speak"]
 
 # Create an instance of the SSAWrapper class
-ssa = SSAWrapper()
+augie = SSAWrapper()
 
 try:
     arguments, values = getopt.getopt(argumentList, options, long_options)
@@ -65,7 +65,7 @@ try:
             logger.info(
                 "Setting Speach to True. Use !join to let Second Shift Augie join the VOICE_CHANNEL_ID"
             )
-            ssa.use_voice = True
+            augie.use_voice = True
 
 except getopt.error as err:
     # output error, and return with an error code
@@ -121,13 +121,13 @@ async def on_ready():
         logger.error(f"Error: {e}")
 
     await register_cogs()  # load cog modules
-    await working(bot)  # set to busy while we set up.
+    await working(bot, "Getting set up")  # set to busy while we set up.
 
     # finalize on ready by setting status to ready and sending the MOTD
     channel = bot.get_channel(int(CHANNEL_ID))
     # Set the narrative for the SSAWrapper instance
     await channel.send(MOTD)
-    await channel.send(await ssa.set_narrative())
+    await channel.send(await augie.set_narrative())
 
     await wait_for_orders(bot)
 
@@ -157,7 +157,7 @@ async def join(ctx):
     try:
         voice_client = nextcord.utils.get(bot.voice_clients)
         audio_source = nextcord.FFmpegPCMAudio("SecondShiftAugieReportingForDuty.mp3")
-        if not voice_client.is_playing() and ssa.use_voice:
+        if not voice_client.is_playing() and augie.use_voice:
             voice_client.play(audio_source, after=None)
     except Exception as e:
         logger.error(f"General error in join: {e}")
@@ -185,7 +185,7 @@ async def summary(ctx, link):
 @bot.command()
 async def summarize(ctx, link):
     """kicks off https://pipedream.com/ workflow"""
-    await working(bot)
+    await working(bot, "Summarizing...")
     try:
         await ctx.send("Downloading")
         yt = YouTube(
@@ -197,8 +197,8 @@ async def summarize(ctx, link):
         )
 
         await ctx.send("Processing:  " + yt.title)
-        if ssa.use_voice:
-            await ssa.generate_voice_sample("Summarizing: " + yt.title, True, bot)
+        if augie.use_voice:
+            await augie.generate_voice_sample("Summarizing: " + yt.title, True, bot)
 
         logger.info(yt.streams)
         stream = yt.streams.filter(only_audio=True).last()
@@ -223,7 +223,7 @@ async def summarize(ctx, link):
 
 @bot.command()
 async def transcribe(ctx, link):
-    await working(bot)
+    await working(bot, "Transcribing... ")
     try:
         yt = YouTube(
             link,
@@ -233,8 +233,8 @@ async def transcribe(ctx, link):
             allow_oauth_cache=True,
         )
         await ctx.send("Processing:  " + yt.title)
-        if ssa.use_voice:
-            await ssa.generate_voice_sample("Transcribing: " + yt.title, True, bot)
+        if augie.use_voice:
+            await augie.generate_voice_sample("Transcribing: " + yt.title, True, bot)
         logger.info(yt.streams)
 
         ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
@@ -269,16 +269,17 @@ async def on_message(message):
             message.content.find("@Second_Shift_Augie") > 0
             or message.content.find("@1100576429781045298") > 0
     ):
-        await working(bot)
+        await working(bot, "Replying...")
 
         results = []
-        for response in ssa.agent_chain.run(input=message.content):
+        for response in augie.agent_chain.run(input=message.content):
             results.append(response)
         result = ''.join(results)
 
         await message.reply(result, mention_author=True)
-        if ssa.use_voice:
-            await ssa.generate_voice_sample(result, True, bot)
+
+        if augie.use_voice:
+            await augie.generate_voice_sample(result, True, bot)
         await wait_for_orders(bot)
 
     await bot.process_commands(message)

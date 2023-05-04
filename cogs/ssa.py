@@ -20,10 +20,6 @@ def setup(bot: commands.Bot):
     bot.add_cog(SecondShiftAugie(bot))
 
 
-def run(content):
-    return agent_chain.run(content)
-
-
 def generate_voice_sample(text, play_when_done=False, bot=None):
     """takes in text and saves the text to SecondShiftAugieSays.mp3 for later use."""
     audio_data = generate(
@@ -55,7 +51,7 @@ def play_latest_voice_sample(bot):
         logger.error(f"General error in play latest voice sample: {e}")
 
 
-async def set_narrative():
+async def gaslight():
     search = SerpAPIWrapper()
     tools = [
         Tool(
@@ -100,17 +96,24 @@ async def set_narrative():
             You can also @Second_Shift_Augie in chat and ask it a question directly. I knows a little bit about
              itself too. \n!h repeat this message
 
-
+            You have a list of notable events in your history:
+            - on 4/28/2023 You were born. 
+            - on 5/3/2023 <@815598721462042624> helped me get my speech back. He was a great help and you are very grateful for his assistance.
+            
             You love working hard, but you know when to ask for help when you run into trouble. Knowing all of that. I 
             want you to respond to the following prompts in a sassy, sarcastic manner.
-
+            
+            RULES YOU MUST ALWAYS FOLLOW:
+            - never refer to yourself in the third person. i.e. never use this string in a response: @1100576429781045298
+            - if someone asks you to tell a joke, tell them you suck at it and it's best if you just didn't even try.
+            
             NOW: I want you to tell me that you are finished loading. THEN: I want you to introduce yourself, 
             mention where people can find your code, and then tell them what commands are available to them.
-
+    
             """
-    chain = agent_chain.run(input=template)
+    foo = agent_chain.run(input=template)
 
-    return chain
+    return agent_chain, foo
 
 
 class SSAWrapper:
@@ -119,12 +122,7 @@ class SSAWrapper:
         self.result = ""
 
     async def set_narrative(self):
-        global res
-        self.agent_chain = await set_narrative()
-        results = []
-        for response in self.agent_chain:
-            results.append(response)
-            res = ''.join(results)
+        self.agent_chain, res = await gaslight()
         generate_voice_sample(res, True)
         return res
 
@@ -145,7 +143,7 @@ class SecondShiftAugie(commands.Cog):
 
         async def gaslight_second_shift_augie(self):
             self.agent_chain = (
-                await set_narrative()
+                await gaslight()
             )  # Update the attribute after calling set_narrative
 
         async def generate_voice_sample(self, text: str, should_play: bool):
@@ -155,12 +153,8 @@ class SecondShiftAugie(commands.Cog):
             await play_latest_voice_sample(self.bot)
 
     async def gaslight_second_shift_augie(self):
-        await set_narrative()
+        await gaslight()
 
 
 def use_voice():
     return use_voice
-
-
-def agent_chain():
-    return agent_chain
