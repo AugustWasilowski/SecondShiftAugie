@@ -9,9 +9,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def working(bot):
+async def working(bot, task="Working... Please hold..."):
     """sets Second Shift Augie to busy status"""
-    game = nextcord.Game("Working... Please hold...")
+    game = nextcord.Game(task)
     await bot.change_presence(status=nextcord.Status.do_not_disturb, activity=game)
     try:
         voice_client = nextcord.utils.get(bot.voice_clients)

@@ -121,7 +121,7 @@ async def on_ready():
         logger.error(f"Error: {e}")
 
     await register_cogs()  # load cog modules
-    await working(bot)  # set to busy while we set up.
+    await working(bot, "Getting set up")  # set to busy while we set up.
 
     # finalize on ready by setting status to ready and sending the MOTD
     channel = bot.get_channel(int(CHANNEL_ID))
@@ -185,7 +185,7 @@ async def summary(ctx, link):
 @bot.command()
 async def summarize(ctx, link):
     """kicks off https://pipedream.com/ workflow"""
-    await working(bot)
+    await working(bot, "Summarizing...")
     try:
         await ctx.send("Downloading")
         yt = YouTube(
@@ -223,7 +223,7 @@ async def summarize(ctx, link):
 
 @bot.command()
 async def transcribe(ctx, link):
-    await working(bot)
+    await working(bot, "Transcribing... ")
     try:
         yt = YouTube(
             link,
@@ -269,7 +269,7 @@ async def on_message(message):
             message.content.find("@Second_Shift_Augie") > 0
             or message.content.find("@1100576429781045298") > 0
     ):
-        await working(bot)
+        await working(bot, "Replying...")
 
         results = []
         for response in augie.agent_chain.run(input=message.content):
