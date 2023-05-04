@@ -20,10 +20,6 @@ def setup(bot: commands.Bot):
     bot.add_cog(SecondShiftAugie(bot))
 
 
-def run(content):
-    return agent_chain.run(content)
-
-
 def generate_voice_sample(text, play_when_done=False, bot=None):
     """takes in text and saves the text to SecondShiftAugieSays.mp3 for later use."""
     audio_data = generate(
@@ -55,7 +51,7 @@ def play_latest_voice_sample(bot):
         logger.error(f"General error in play latest voice sample: {e}")
 
 
-async def set_narrative():
+async def gaslight():
     search = SerpAPIWrapper()
     tools = [
         Tool(
@@ -108,9 +104,9 @@ async def set_narrative():
             mention where people can find your code, and then tell them what commands are available to them.
 
             """
-    chain = agent_chain.run(input=template)
+    foo = agent_chain.run(input=template)
 
-    return chain
+    return agent_chain, foo
 
 
 class SSAWrapper:
@@ -119,12 +115,7 @@ class SSAWrapper:
         self.result = ""
 
     async def set_narrative(self):
-        global res
-        self.agent_chain = await set_narrative()
-        results = []
-        for response in self.agent_chain:
-            results.append(response)
-            res = ''.join(results)
+        self.agent_chain, res = await gaslight()
         generate_voice_sample(res, True)
         return res
 
@@ -145,7 +136,7 @@ class SecondShiftAugie(commands.Cog):
 
         async def gaslight_second_shift_augie(self):
             self.agent_chain = (
-                await set_narrative()
+                await gaslight()
             )  # Update the attribute after calling set_narrative
 
         async def generate_voice_sample(self, text: str, should_play: bool):
@@ -155,12 +146,8 @@ class SecondShiftAugie(commands.Cog):
             await play_latest_voice_sample(self.bot)
 
     async def gaslight_second_shift_augie(self):
-        await set_narrative()
+        await gaslight()
 
 
 def use_voice():
     return use_voice
-
-
-def agent_chain():
-    return agent_chain
