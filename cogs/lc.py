@@ -2,6 +2,7 @@ import logging
 import os
 import textwrap
 
+from langchain.agents import Tool, initialize_agent
 from langchain.chains import RetrievalQA
 from langchain.chains.summarize import load_summarize_chain
 from langchain.chat_models.openai import ChatOpenAI
@@ -10,6 +11,7 @@ from langchain.document_loaders import YoutubeLoader
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.llms import OpenAI
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.utilities import WikipediaAPIWrapper
 from langchain.vectorstores import FAISS
 from nextcord.ext import commands
 from pytube import YouTube
@@ -108,3 +110,20 @@ class LangChainCog(commands.Cog):
         await working(self.bot)
         await exe_selfreflect(ctx, arg)
         await wait_for_orders(self.bot)
+
+    @commands.command()
+    async def wiki(self, ctx, *, args):
+        llm = ChatOpenAI(temperature=0, model_name='gpt-3.5-turbo', openai_api_key=os.getenv("OPENAI_API_KEY"))
+        wikipedia = WikipediaAPIWrapper()
+        tools = [
+            Tool(
+                name="Wikipedia",
+                func=wikipedia.run,
+                description="Useful for when you need to get information from wikipedia about a single topic"
+            ),
+        ]
+
+        agent_executor = initialize_agent(tools, llm, agent='zero-shot-react-description', verbose=True)
+        output = agent_executor.run(args)
+
+        await ctx.send(output)
