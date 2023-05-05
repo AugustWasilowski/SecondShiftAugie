@@ -22,9 +22,7 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")  # Channel ID where SSA will log to.
 VOICE_CHANNEL_ID = os.getenv(
     "VOICE_CHANNEL_ID"
 )  # SSA will join this channel id when asked to !join
-SAVE_PATH = os.getenv(
-    "SAVE_PATH"
-)  # where SSA saves audio and other temp files TODO: use tmpfile
+SAVE_PATH = os.getenv("SAVE_PATH")  # where SSA saves audio and other temp files TODO: use tmpfile
 HELP_MSG = (
     "Commands:\n!summarize <YOUTUBE LINK>(try to keep in under 10 "
     "minutes long or it may time out) \n!wolf <QUERY> for Wolfram "
@@ -35,7 +33,7 @@ HELP_MSG = (
 )
 
 MOTD = (
-    "Second Shift Augie! Reporting for Duty!"  # Announcement every time SSA boots up.
+    "Second Shift Augie! Reporting for Duty! Please wait while I finish booting up..."  # Announcement every time SSA boots up.
 )
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -137,11 +135,10 @@ async def reload(ctx):
     await reload_cogs()
 
 
-@bot.command(name="helpmeaugie")
-async def hello(interaction: nextcord.Interaction):
-    await interaction.response.send_message(
-        f"Hey {interaction.user.mention}\n{HELP_MSG}", ephemeral=True
-    )
+@bot.user_command(guild_ids=[int(os.getenv("GUILD_ID")), 425739994012057611])
+async def hello(interaction: nextcord.Interaction, member: nextcord.Member):
+    """Says hi to a user that was right-clicked on"""
+    await interaction.response.send_message(f"Hello {member}!")
 
 
 @bot.command()
@@ -157,7 +154,7 @@ async def join(ctx):
     try:
         voice_client = nextcord.utils.get(bot.voice_clients)
         audio_source = nextcord.FFmpegPCMAudio("SecondShiftAugieReportingForDuty.mp3")
-        if not voice_client.is_playing() and augie.use_voice:
+        if augie.use_voice:
             voice_client.play(audio_source, after=None)
     except Exception as e:
         logger.error(f"General error in join: {e}")
@@ -176,11 +173,11 @@ async def h(ctx):
     await ctx.send(HELP_MSG)
 
 
-@bot.command()
-async def summary(ctx, link):
+@bot.slash_command(guild_ids=[int(os.getenv("GUILD_ID")), 425739994012057611])
+async def summary(interaction: nextcord.Interaction, link):
     """Falls through to !summarize"""
-    await summarize(ctx, link)
-
+    # await summarize(ctx, link)
+    await interaction.response.send_message(f"!summarize {link}!")
 
 @bot.command()
 async def summarize(ctx, link):
@@ -197,8 +194,11 @@ async def summarize(ctx, link):
         )
 
         await ctx.send("Processing:  " + yt.title)
-        if augie.use_voice:
-            await augie.generate_voice_sample("Summarizing: " + yt.title, True, bot)
+        try:
+            if augie.use_voice:
+                await augie.speak("Summarizing: " + yt.title, True, bot)
+        except Exception as e:
+            logger.error(f"error while trying to generate a voice while Summarizing {e}")
 
         logger.info(yt.streams)
         stream = yt.streams.filter(only_audio=True).last()
@@ -234,7 +234,7 @@ async def transcribe(ctx, link):
         )
         await ctx.send("Processing:  " + yt.title)
         if augie.use_voice:
-            await augie.generate_voice_sample("Transcribing: " + yt.title, True, bot)
+            await augie.speak("Transcribing: " + yt.title, True, bot)
         logger.info(yt.streams)
 
         ytFile = yt.streams.filter(only_audio=True).first().download(SAVE_PATH)
@@ -265,10 +265,7 @@ async def on_message(message):
         message.channel.send("Please check your DMs for a link to log in.")
         message.member.send(f"Please visit this URL to log in: {url}")
 
-    if (
-            message.content.find("@Second_Shift_Augie") > 0
-            or message.content.find("@1100576429781045298") > 0
-    ):
+    if message.content.find("@Second_Shift_Augie") > 0 or message.content.find("@1100576429781045298") > 0:
         await working(bot, "Replying...")
 
         results = []
@@ -277,9 +274,12 @@ async def on_message(message):
         result = ''.join(results)
 
         await message.reply(result, mention_author=True)
+        try:
+            if augie.use_voice:
+                await augie.speak(result, True, bot)
+        except Exception as e:
+            logger.error(f"error trying to speak {e}")
 
-        if augie.use_voice:
-            await augie.generate_voice_sample(result, True, bot)
         await wait_for_orders(bot)
 
     await bot.process_commands(message)
