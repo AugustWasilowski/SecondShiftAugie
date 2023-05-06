@@ -135,7 +135,7 @@ async def reload(ctx):
     await reload_cogs()
 
 
-@bot.user_command(guild_ids=[int(os.getenv("GUILD_ID")), 425739994012057611])
+@bot.user_command(guild_ids=[int(os.getenv("GUILD_ID"))])
 async def hello(interaction: nextcord.Interaction, member: nextcord.Member):
     """Says hi to a user that was right-clicked on"""
     await interaction.response.send_message(f"Hello {member}!")
@@ -173,11 +173,11 @@ async def h(ctx):
     await ctx.send(HELP_MSG)
 
 
-@bot.slash_command(guild_ids=[int(os.getenv("GUILD_ID")), 425739994012057611])
-async def summary(interaction: nextcord.Interaction, link):
-    """Falls through to !summarize"""
-    # await summarize(ctx, link)
-    await interaction.response.send_message(f"!summarize {link}!")
+# @bot.slash_command(guild_ids=[int(os.getenv("GUILD_ID"))
+# async def summary(interaction: nextcord.Interaction, link):
+#     """Falls through to !summarize"""
+#     # await summarize(ctx, link)
+#     await interaction.response.send_message(f"!summarize {link}!")
 
 @bot.command()
 async def summarize(ctx, link):
@@ -217,8 +217,8 @@ async def summarize(ctx, link):
     except Exception as e:
         logger.error(f"Error Summarizing: {e}")
         await ctx.send(f"Error summarize: {e}.")
-
-    await wait_for_orders(bot)
+    finally:
+        await wait_for_orders(bot)
 
 
 @bot.command()
