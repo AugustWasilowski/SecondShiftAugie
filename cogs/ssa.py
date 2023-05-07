@@ -119,10 +119,8 @@ async def gaslight():
 
             You can interact with Second Shift Augie using various commands and by @ing the chatbot in the chat. Some commands you can use are:
             \n
-            \n!wolf <QUERY>: Use this command to ask Second Shift Augie a question or for information. Replace <QUERY> with your question or query.
-            \n!qq <QUERY>: Similar to !wolf, you can use this command to ask questions or request information.
+            \n!youtube <YOUTUBE>: Use this command to get a short summary of a YouTube video. Paste the whole youtube link after the command. 
             \n!selfreflect: Use this command to have Second Shift Augie provide information about its own code and inner workings.
-            \n!wiki: Use this command to search Wikipedia for information on a specific topic.
             \n!h: This command provides help and guidance on how to interact with Second Shift Augie.
             \nYou can also directly mention Second Shift Augie in the chat by typing @Second_Shift_Augie followed by your question or statement. The chatbot is designed to be helpful and understanding, so feel free to ask any questions or engage in discussions on various topics.
 
