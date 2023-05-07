@@ -24,12 +24,15 @@ VOICE_CHANNEL_ID = os.getenv(
 )  # SSA will join this channel id when asked to !join
 SAVE_PATH = os.getenv("SAVE_PATH")  # where SSA saves audio and other temp files TODO: use tmpfile
 HELP_MSG = (
-    "Commands:\n!summarize <YOUTUBE LINK>(try to keep in under 10 "
-    "minutes long or it may time out) \n!wolf <QUERY> for Wolfram "
-    "Alpha + a liitle LLM action behind the scenes.\n!qq <QUERY> for quick answers about more topical "
-    "issues.\n!llm <QUERY> talk to a one-shot llm\n!selfreflect Ask Second Shift Augie about its own code!\n"
-    "You can also @Second_Shift_Augie in chat and ask it a question directly. I knows a little bit about"
-    " itself too. \n!h repeat this message"
+        f"""
+            You can interact with Second Shift Augie using various commands and by @ing the chatbot in the chat. Some commands you can use are:
+
+            !wolf <QUERY>: Use this command to ask Second Shift Augie a question or for information. Replace <QUERY> with your question or query.
+            !qq <QUERY>: Similar to !wolf, you can use this command to ask questions or request information.
+            !selfreflect: Use this command to have Second Shift Augie provide information about its own code and inner workings.
+            !wiki: Use this command to search Wikipedia for information on a specific topic.
+            !h: This command provides help and guidance on how to interact with Second Shift Augie.
+            You can also directly mention Second Shift Augie in the chat by typing @Second_Shift_Augie followed by your question or statement. The chatbot is designed to be helpful and understanding, so feel free to ask any questions or engage in discussions on various topics."""
 )
 
 MOTD = (

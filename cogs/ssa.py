@@ -1,12 +1,19 @@
+import getopt
 import logging
 import os
+import sys
 import wave
 
 import nextcord
+import wikipedia
+import wolframalpha
 from elevenlabs import generate
-from langchain import OpenAI, SerpAPIWrapper
+from langchain import LLMMathChain
+from langchain import OpenAI, Wikipedia
 from langchain.agents import Tool, initialize_agent, AgentType, AgentExecutor
+from langchain.agents.react.base import DocstoreExplorer
 from langchain.memory import ConversationBufferMemory
+from langchain.utilities import SerpAPIWrapper
 from nextcord.ext import commands
 from pydub import AudioSegment
 
@@ -51,6 +58,9 @@ def play_latest_voice_sample(bot):
 
 
 async def gaslight():
+    docstore = DocstoreExplorer(Wikipedia())
+    math_llm = OpenAI(temperature=0)
+    llm_math_chain = LLMMathChain(llm=math_llm, verbose=True)
     search = SerpAPIWrapper()
     tools = [
         Tool(
@@ -58,7 +68,22 @@ async def gaslight():
             func=search.run,
             description="useful for when you need to answer questions about current events or the current stat of the "
                         "world",
-        )
+        ),
+        Tool(
+                name="Wikipedia",
+                func=wikipedia.search,
+                description="Useful for when you need to get information from wikipedia about a single topic"
+        ),
+        Tool(
+            name="Calculator",
+            func=llm_math_chain.run,
+            description="useful for doing calculations",
+        ),
+        Tool(
+            name="Wolfram Alpha",
+            func=wolframalpha.Client.query,
+            description="A wolfram alpha search engine. Useful for when you need to answer questions about Math, "
+                        "Science, Technology, Culture, Society and Everyday Life. Input should be a search query.")
     ]
     memory = ConversationBufferMemory(memory_key="chat_history")
     llm = OpenAI(temperature=0.9)
@@ -92,12 +117,14 @@ async def gaslight():
             but may be frustrated by drama or irrational behavior. Although not particularly sociable, ISTPs are helpful and 
             understanding, and are always willing to lend a hand.
 
-            Commands:\n!summarize <YOUTUBE LINK>(try to keep in under 10 
-            minutes long or it may time out) \n!wolf <QUERY> for Wolfram 
-            Alpha + a liitle LLM action behind the scenes.\n!qq <QUERY> for quick answers about more topical 
-            issues.\n!llm <QUERY> talk to a one-shot llm\n!selfreflect Ask Second Shift Augie about its own code!\n
-            You can also @Second_Shift_Augie in chat and ask it a question directly. I knows a little bit about
-             itself too. \n!h repeat this message
+            You can interact with Second Shift Augie using various commands and by @ing the chatbot in the chat. Some commands you can use are:
+            \n
+            \n!wolf <QUERY>: Use this command to ask Second Shift Augie a question or for information. Replace <QUERY> with your question or query.
+            \n!qq <QUERY>: Similar to !wolf, you can use this command to ask questions or request information.
+            \n!selfreflect: Use this command to have Second Shift Augie provide information about its own code and inner workings.
+            \n!wiki: Use this command to search Wikipedia for information on a specific topic.
+            \n!h: This command provides help and guidance on how to interact with Second Shift Augie.
+            \nYou can also directly mention Second Shift Augie in the chat by typing @Second_Shift_Augie followed by your question or statement. The chatbot is designed to be helpful and understanding, so feel free to ask any questions or engage in discussions on various topics.
 
             You have a list of notable events in your history:
             - on 4/28/2023 You were born. 
@@ -165,4 +192,11 @@ class SecondShiftAugie(commands.Cog):
 
 
 def use_voice():
-    return use_voice
+    try:
+        arguments, values = getopt.getopt(sys.argv[1:], "s", ["speak"])
+        logger.info("checking each argument")
+        for currentArgument, currentValue in arguments:
+            if currentArgument in ("-s", "--Speak"):
+                return True
+    finally:
+        return False

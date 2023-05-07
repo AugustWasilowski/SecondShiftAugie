@@ -1,10 +1,10 @@
 import logging
 
+from langchain import OpenAI
 from langchain.agents import load_tools, initialize_agent
 from nextcord.ext import commands
 
 from cogs.status import working, wait_for_orders
-from langchain import OpenAI
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -34,7 +34,7 @@ class SerpCog(commands.Cog):
         """Executes SerapApi"""
         try:
             llm = OpenAI(temperature=0)
-            tool_names = ["serpapi"]
+            tool_names = ["serpapi", "wikipedia", "wolfram-alpha"]
             tools = load_tools(tool_names)
 
             agent = initialize_agent(

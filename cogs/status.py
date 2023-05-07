@@ -3,6 +3,8 @@ import logging
 import nextcord
 from nextcord.ext import commands
 
+from cogs.ssa import use_voice
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
@@ -16,7 +18,7 @@ async def working(bot, task="Working... Please hold..."):
     try:
         voice_client = nextcord.utils.get(bot.voice_clients)
         audio_source = nextcord.FFmpegPCMAudio("GettingDownToBusiness.mp3")
-        if not voice_client.is_playing():
+        if not voice_client.is_playing() and use_voice:
             voice_client.play(audio_source, after=None)
     except Exception as e:
         logger.error(f"General error in working: {e}")

@@ -16,14 +16,14 @@ from langchain.vectorstores import FAISS
 from nextcord.ext import commands
 from pytube import YouTube
 
-from cogs.ssa import generate_voice_sample
+from cogs.ssa import generate_voice_sample, SSAWrapper
 from cogs.status import working, wait_for_orders
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
-
+augie = SSAWrapper()
 def setup(bot: commands.Bot):
     bot.add_cog(LangChainCog(bot))
 
@@ -53,7 +53,8 @@ async def exe_selfreflect(ctx, arg):
     qa = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=docsearch.as_retriever())
 
     output = qa.run(arg)
-    generate_voice_sample(output, True)
+    if augie.use_voice:
+        await augie.speak(output, ctx, True)
     output_chunks = textwrap.wrap(output, width=2000)
 
     # send each chunk separately using ctx.send()
@@ -120,7 +121,7 @@ class LangChainCog(commands.Cog):
                 name="Wikipedia",
                 func=wikipedia.run,
                 description="Useful for when you need to get information from wikipedia about a single topic"
-            ),
+            )
         ]
 
         agent_executor = initialize_agent(tools, llm, agent='zero-shot-react-description', verbose=True)
