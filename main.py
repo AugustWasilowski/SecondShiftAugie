@@ -26,13 +26,10 @@ SAVE_PATH = os.getenv("SAVE_PATH")  # where SSA saves audio and other temp files
 HELP_MSG = (
         f"""
             You can interact with Second Shift Augie using various commands and by @ing the chatbot in the chat. Some commands you can use are:
-
-            !wolf <QUERY>: Use this command to ask Second Shift Augie a question or for information. Replace <QUERY> with your question or query.
-            !qq <QUERY>: Similar to !wolf, you can use this command to ask questions or request information.
-            !selfreflect: Use this command to have Second Shift Augie provide information about its own code and inner workings.
-            !wiki: Use this command to search Wikipedia for information on a specific topic.
-            !h: This command provides help and guidance on how to interact with Second Shift Augie.
-            You can also directly mention Second Shift Augie in the chat by typing @Second_Shift_Augie followed by your question or statement. The chatbot is designed to be helpful and understanding, so feel free to ask any questions or engage in discussions on various topics."""
+            \n!youtube <YOUTUBE>: Use this command to get a short summary of a YouTube video. Paste the whole youtube link after the command. 
+            \n!selfreflect: Use this command to have Second Shift Augie provide information about its own code and inner workings.
+            \n!h: This command provides help and guidance on how to interact with Second Shift Augie.
+            \nYou can also directly mention Second Shift Augie in the chat by typing @Second_Shift_Augie followed by your question or statement. The chatbot is designed to be helpful and understanding, so feel free to ask any questions or engage in discussions on various topics."""
 )
 
 MOTD = (
@@ -113,14 +110,6 @@ async def reload_cogs():
 async def on_ready():
     """we're done setting everything up, let's put out the welcome sign."""
     logger.info(f"We have logged in as {bot.user} (ID: {bot.user.id}).")
-
-    # register slash commands (busted at the moment. bot.tree doesn't exist)
-    try:
-        synced = await bot.tree.sync()
-        logger.info(f"Synced {len(synced)} command(s)")
-    except Exception as e:
-        logger.error(f"Error: {e}")
-
     await register_cogs()  # load cog modules
     await working(bot, "Getting set up")  # set to busy while we set up.
 
@@ -136,12 +125,6 @@ async def on_ready():
 @bot.command(name="reload")
 async def reload(ctx):
     await reload_cogs()
-
-
-@bot.user_command(guild_ids=[int(os.getenv("GUILD_ID"))])
-async def hello(interaction: nextcord.Interaction, member: nextcord.Member):
-    """Says hi to a user that was right-clicked on"""
-    await interaction.response.send_message(f"Hello {member}!")
 
 
 @bot.command()
