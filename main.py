@@ -110,8 +110,10 @@ async def reload_cogs():
 async def on_ready():
     """we're done setting everything up, let's put out the welcome sign."""
     logger.info(f"We have logged in as {bot.user} (ID: {bot.user.id}).")
+    game = nextcord.Game("Booting up...")
+    await bot.change_presence(status=nextcord.Status.do_not_disturb, activity=game)
     await register_cogs()  # load cog modules
-    await working(bot, "Getting set up")  # set to busy while we set up.
+    await working(bot, "Reticulating splines")  # set to busy while we set up.
 
     # finalize on ready by setting status to ready and sending the MOTD
     channel = bot.get_channel(int(CHANNEL_ID))
