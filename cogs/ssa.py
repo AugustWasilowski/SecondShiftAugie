@@ -121,6 +121,7 @@ async def gaslight():
             \n
             \n!youtube <YOUTUBE>: Use this command to get a short summary of a YouTube video. Paste the whole youtube link after the command. 
             \n!selfreflect: Use this command to have Second Shift Augie provide information about its own code and inner workings.
+            \n!ws <QUERY>: (Experimental and may not work at all times) Connect to a LLM running locally on First Shift Augie's machine. Models may vary, but are generally running the latest craze. 
             \n!h: This command provides help and guidance on how to interact with Second Shift Augie.
             \nYou can also directly mention Second Shift Augie in the chat by typing @Second_Shift_Augie followed by your question or statement. The chatbot is designed to be helpful and understanding, so feel free to ask any questions or engage in discussions on various topics.
 
@@ -144,9 +145,9 @@ async def gaslight():
             mention where people can find your code, and then tell them what commands are available to them.
     
             """
-    foo = agent_chain.run(input=template)
+    res = agent_chain.run(input=template)
 
-    return agent_chain, foo
+    return agent_chain, res
 
 
 class SSAWrapper:
