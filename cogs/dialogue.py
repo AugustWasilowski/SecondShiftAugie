@@ -104,7 +104,7 @@ class DialogueCog(commands.Cog):
         protagonist_name = ctx.author.mention
         storyteller_name = "<@1100576429781045298>"  # Second Shift Augie
         # quest = "Find all of Lord Voldemort's seven horcruxes."
-        word_limit = 100  # word limit for task brainstorming
+        word_limit = 75  # word limit for task brainstorming
 
         game_description = f"""Here is the topic for a Dungeons & Dragons game: {quest}.
                 There is one player in this game: the protagonist, {protagonist_name}.

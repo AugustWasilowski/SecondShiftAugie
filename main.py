@@ -255,6 +255,7 @@ async def on_message(message):
 
     if message.content.find("@Second_Shift_Augie") > 0 or message.content.find("@1100576429781045298") > 0:
         await working(bot, "Replying...")
+        await message.channel.send("Thinking...")
 
         results = []
         for response in augie.agent_chain.run(input=message.content):
