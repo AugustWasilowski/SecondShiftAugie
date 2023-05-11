@@ -243,16 +243,6 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    if (
-            message.guild is not None
-            and message.content is "login"
-            and message.member.permissions.has("ADMINISTRATOR")
-    ):
-        # url = auth.generateAuthURL("google", message.guild.id, os.getenv("SCOPES_TO_REQUEST"))
-        url = "https://tinyurl.com/5x2bcwjy"
-        message.channel.send("Please check your DMs for a link to log in.")
-        message.member.send(f"Please visit this URL to log in: {url}")
-
     if message.content.find("@Second_Shift_Augie") > 0 or message.content.find("@1100576429781045298") > 0:
         await working(bot, "Replying...")
         await message.channel.send("Thinking...")

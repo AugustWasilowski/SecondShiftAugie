@@ -1,15 +1,15 @@
 import logging
 import os
+import pickle
 import textwrap
 
-from langchain.chains import RetrievalQA
+from langchain.chains import RetrievalQA, RetrievalQAWithSourcesChain
 from langchain.chains.summarize import load_summarize_chain
 from langchain.chat_models.openai import ChatOpenAI
-from langchain.document_loaders import TextLoader
-from langchain.document_loaders import YoutubeLoader
+from langchain.document_loaders import TextLoader, YoutubeLoader, UnstructuredURLLoader
 from langchain.embeddings import OpenAIEmbeddings
 from langchain.llms import OpenAI
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
 from langchain.vectorstores import FAISS
 from nextcord.ext import commands
 from pytube import YouTube
@@ -64,9 +64,7 @@ async def exe_selfreflect(ctx, arg):
 
 async def summarize_youtube_id(ctx, arg):
     loader = YoutubeLoader.from_youtube_url(arg)
-    # loader.add_video_info = True
     result = loader.load()  # Loads the video
-    # await ctx.send(f"Found video from {result[0].metadata['author']} that is {result[0].metadata['length']} seconds long")  # busted
 
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=0)
     texts = text_splitter.split_documents(result)
@@ -94,4 +92,46 @@ class LangChainCog(commands.Cog):
     async def selfreflect(self, ctx, *, arg):
         await working(self.bot)
         await exe_selfreflect(ctx, arg)
+        await wait_for_orders(self.bot)
+
+    @commands.command()
+    async def websites(self, ctx, *, args):
+        await working(self.bot)
+        urls = args.split(",")
+        loaders = UnstructuredURLLoader(urls=urls)
+        data = loaders.load()
+        text_splitter = CharacterTextSplitter(separator='\n',
+                                              chunk_size=1000,
+                                              chunk_overlap=200)
+
+        docs = text_splitter.split_documents(data)
+        await ctx.send(f"Docs: {docs.len}")
+        embeddings = OpenAIEmbeddings()
+        vectorStore_openAI = FAISS.from_documents(docs, embeddings)
+
+        with open("faiss_store_openai.pkl", "wb") as f:
+            pickle.dump(vectorStore_openAI, f)
+        await wait_for_orders(self.bot)
+
+    @commands.command()
+    async def interrogate(self, ctx, *, args):
+        with open("faiss_store_openai.pkl", "rb") as f:
+            VectorStore = pickle.load(f)
+
+        llm = OpenAI(temperature=0, model_name='')
+        chain = RetrievalQAWithSourcesChain.from_llm(llm=llm, retriever=VectorStore.as_retriever())
+        prompt = f"Write a Title for the transcript that is under 15 words. " \
+                 f"Then write: '--Summary--' " \
+                 f"Write 'Summary' as a Heading " \
+                 f"1. Write a summary of the provided transcript. " \
+                 f"Then  write: '--Additional Info--'. " \
+                 f"Then return a list of the main points in the provided transcript. " \
+                 f"Then return a list of action items. " \
+                 f"Then return a list of follow up questions. " \
+                 f"Then return a list of potential arguments against the transcript." \
+                 f"For each list, return a Heading 2 before writing the list items. " \
+                 f"Limit each list item to 200 words, and return no more than 20  points per list. " \
+                 f"Transcript: "
+        foo = chain({"question": prompt}, return_only_outputs=True)
+        await ctx.send(foo)
         await wait_for_orders(self.bot)
