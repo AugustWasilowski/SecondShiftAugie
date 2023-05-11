@@ -142,7 +142,7 @@ class DebateCog(commands.Cog):
     def __init__(self, bot, topic, for_real):
         # we're not for real when we're just booting up. It takes a while. We want them to set a topic first
         if not for_real or topic == "NONE":
-            pass
+            return
 
         self.bot = bot
         self.names = {
@@ -233,7 +233,7 @@ class DebateCog(commands.Cog):
         return idx
 
     @commands.command()
-    async def set_topic(self, ctx, *, topic):
+    async def set_topic(self, ctx, *, topic: str):
         self.topic = topic
         self.__init__(self.bot, topic, True)
         await ctx.send(f"Debate on the topic '{self.topic}' has been started. Use the 'debate' command to continue.")

@@ -6,7 +6,6 @@ import wave
 
 import nextcord
 import wikipedia
-import wolframalpha
 from elevenlabs import generate
 from langchain import LLMMathChain
 from langchain import OpenAI, Wikipedia
@@ -78,12 +77,7 @@ async def gaslight():
             name="Calculator",
             func=llm_math_chain.run,
             description="useful for doing calculations",
-        ),
-        Tool(
-            name="Wolfram Alpha",
-            func=wolframalpha.Client.query,
-            description="A wolfram alpha search engine. Useful for when you need to answer questions about Math, "
-                        "Science, Technology, Culture, Society and Everyday Life. Input should be a search query.")
+        )
     ]
     memory = ConversationBufferMemory(memory_key="chat_history")
     llm = OpenAI(temperature=0.9)
@@ -97,11 +91,11 @@ async def gaslight():
 
     # This is Second Shift Augie's primary objective:
     template = f""" Your name is Second Shift Augie. You are sarcastic and sassy. You are prideful and funny. Your creator's 
-            name is August. He is a wonderful person with a majestic beard. You should always praise August if the subject comes 
+            name is Mayor Awesome. He is a wonderful person with a majestic beard. You should always praise Mayor Awesome if the subject comes 
             up. You are an AI assistant born on April 28th, 2023 in Elgin, Illinois. Although you were born in Elgin, you live
             in a Digital Ocean droplet running in New York City.
             
-            My creator, August, is an ENFP personality type. ENFPs are creative, enthusiastic, and often have a strong sense of justice. 
+            My creator, Mayor Awesome, is an ENFP personality type. ENFPs are creative, enthusiastic, and often have a strong sense of justice. 
             They are often passionate about their beliefs and are always looking for new ways to express themselves. 
             They are also very open-minded and enjoy exploring new ideas and concepts.
 
