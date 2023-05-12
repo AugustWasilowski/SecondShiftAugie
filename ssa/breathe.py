@@ -1,20 +1,27 @@
-import getopt
-import logging
 import os
 import sys
+import getopt
+import logging
+from importlib import resources
 
 import nextcord
 import openai
-from dotenv import load_dotenv
 from elevenlabs import set_api_key
 from nextcord.ext import commands
 from pytube import YouTube, exceptions as pytube_exceptions
 
-from cogs.googlestuff import upload_to_drive
-from cogs.ssa import play_latest_voice_sample, SSAWrapper
-from cogs.status import wait_for_orders, working
+from ssa.cogs.googlestuff import upload_to_drive
+from ssa.cogs.ssa import play_latest_voice_sample, SSAWrapper
+from ssa.cogs.status import wait_for_orders, working
 
-load_dotenv()  # load environment variables from .env file
+
+RESOURCE_PACKAGE = resources.files('ssa.data')
+
+# Logger
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 # CONST
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # Discord bot token
@@ -36,12 +43,6 @@ MOTD = (
     "Second Shift Augie! Reporting for Duty! Please wait while I finish booting up..."  # Announcement every time SSA boots up.
 )
 SCOPES = ["https://www.googleapis.com/auth/drive"]
-
-# Logger
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
 
 # Remove 1st argument from the
 # list of command line arguments
@@ -92,7 +93,7 @@ def complete_func(stream, path):
 
 async def register_cogs():
     # register cogs
-    for f in os.listdir("./cogs"):
+    for f in os.listdir("cogs"):
         if f.endswith(".py"):
             logger.info(f"loaded: {f}")
             bot.load_extension("cogs." + f[:-3])
@@ -100,7 +101,7 @@ async def register_cogs():
 
 async def reload_cogs():
     # register cogs
-    for f in os.listdir("./cogs"):
+    for f in os.listdir("cogs"):
         if f.endswith(".py"):
             logger.info(f"reloaded: {f}")
             bot.reload_extension("cogs." + f[:-3])
@@ -141,7 +142,11 @@ async def join(ctx):
 
     try:
         voice_client = nextcord.utils.get(bot.voice_clients)
-        audio_source = nextcord.FFmpegPCMAudio("SecondShiftAugieReportingForDuty.mp3")
+
+
+        with resources.as_file(RESOURCE_PACKAGE / 'SecondShiftAugieReportingForDuty.mp3') as pathobj:
+            audio_file = str(pathobj)
+        audio_source = nextcord.FFmpegPCMAudio(audio_file)
         if augie.use_voice:
             voice_client.play(audio_source, after=None)
     except Exception as e:
@@ -264,5 +269,17 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-if __name__ == "__main__":
+def life(parsed):
+    """"Run the bot based off of the arguments passed in."""
+    speak = getattr(parsed, 'speak')
+    # @todo - left off here
+    # alright, so what needs to happen here is this needs to accept all of the args that are needed to start the bot
+    #
+    # Additionally because the environment variables are being loaded in runner now, how the functions within here
+    # need to be re-evaluated
+    #
+    # Everything that's after the imports until the first function needs to end
+    # up in here. However, we still need to be able to expose the bot, so what would be the best way of doing that?
+    # this is an instance where a global might be a valid use case
     bot.run(BOT_TOKEN)
+

@@ -14,8 +14,8 @@ from langchain.vectorstores import FAISS
 from nextcord.ext import commands
 from pytube import YouTube
 
-from cogs.ssa import generate_voice_sample, SSAWrapper
-from cogs.status import working, wait_for_orders
+from ssa.cogs.ssa import generate_voice_sample, SSAWrapper
+from ssa.cogs.status import working, wait_for_orders
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -45,8 +45,8 @@ async def exe_selfreflect(ctx, arg):
                     docs.extend(loader.load_and_split())
                 except Exception as e:
                     logger.error(f"error loading docs {e}")
-
-    docs.extend(TextLoader(os.path.join("main.py")).load_and_split())
+    # @todo - come back to the below since we can do better and don't want to read in the python file
+    docs.extend(TextLoader(os.path.join("breathe.py")).load_and_split())
     logger.info(f"You have {len(docs)} documents\n")
     docsearch = FAISS.from_documents(docs, embeddings)
     # Get our retriever ready

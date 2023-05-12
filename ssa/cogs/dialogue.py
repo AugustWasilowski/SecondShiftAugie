@@ -4,7 +4,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 from nextcord.ext import commands
 
-from cogs.status import working, wait_for_orders
+from ssa.cogs.status import working, wait_for_orders
 
 
 def setup(bot):

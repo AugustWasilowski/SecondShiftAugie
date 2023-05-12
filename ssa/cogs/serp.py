@@ -4,7 +4,7 @@ from langchain import OpenAI
 from langchain.agents import load_tools, initialize_agent
 from nextcord.ext import commands
 
-from cogs.status import working, wait_for_orders
+from ssa.cogs.status import working, wait_for_orders
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -2,7 +2,7 @@ import logging
 
 from nextcord.ext import commands
 
-from cogs.status import working, wait_for_orders
+from ssa.cogs.status import working, wait_for_orders
 from langchain import OpenAI
 
 logging.basicConfig(

@@ -1,0 +1,10 @@
+include README.md
+include LICENSE
+
+exclude .env
+exclude env
+exclude settings.yaml
+
+recursive-exclude *.pyc *.pyo
+recursive-exclude *secret* *secrets*
+recursive-exclude requirements *.txt

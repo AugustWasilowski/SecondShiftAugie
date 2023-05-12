@@ -29,10 +29,10 @@ class ImageCog(commands.Cog):
                 image_url = url["url"]  # returns string
                 response = requests.get(image_url)
                 if response.status_code == 200:
-                    with open("../image.jpg", "wb") as f:
+                    with open("../data/image.jpg", "wb") as f:
                         f.write(response.content)
 
-                with open("../image.jpg", "rb") as f:
+                with open("../data/image.jpg", "rb") as f:
                     picture = nextcord.File(f)
                     await ctx.send(file=picture)
 

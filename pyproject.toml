@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel", "setuptools-git-versioning<2",]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssa"
+description = "Second Shift Augie is a sassy and sarcastic AI assistant that runs over Discord."
+license = {file = "LICENSE", content-type = "text/plain"}
+dynamic = ["version", "readme"]
+requires-python = ">=3.11.1"
+dependencies = [
+    "openai==0.27.6",
+    "elevenlabs==0.2.11",
+    "langchain==0.0.165",
+    "pydub==0.25.1",
+    "python-dotenv~=1.0",
+    "PyDrive==1.3.1",
+    "nextcord[voice]==2.4.2",
+    "pytube==15.0.0",
+    "wolframalpha~=5.0.0",
+    "Wave~=0.0.2",
+    "wikipedia~=1.4.0",
+    "websocket-client~=1.5.1",
+    "Requests==2.30.0",
+    "rel~=0.4.8",
+    "websockets~=11.0.3",
+    "asyncio~=3.4.3",
+    "google-search-results~=2.4.2",
+    "spotipy~=2.23.0",
+    "duckduckgo-search",
+    "arxiv",
+    "google-cloud-language",
+    "pdfminer.six",
+    "cffi",
+    "importlib_resources; python_version < '3.9'"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+
+[project.optional-dependencies]
+dev = ["ipython", ]
+
+[project.urls]
+"Homepage" = "https://github.com/AugustWasilowski/SecondShiftAugie"
+"Bug Tracker" = "https://github.com/AugustWasilowski/SecondShiftAugie/issues"
+
+[project.scripts]
+breathe = "ssa.runner:run"
+
+[tool.setuptools]
+license-files = ["LICENSE"]
+
+[tools.setuptools-git-versioning]
+enabled = true
+
+[tool.setuptools.dynamic]
+readme = {file = "README.md", content-type = "text/markdown"}

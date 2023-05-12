@@ -3,7 +3,7 @@ import logging
 from langchain.agents import load_tools, initialize_agent
 from nextcord.ext import commands
 
-from cogs.status import working, wait_for_orders
+from ssa.cogs.status import working, wait_for_orders
 from langchain import OpenAI
 
 logging.basicConfig(
