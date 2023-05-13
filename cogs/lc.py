@@ -98,14 +98,18 @@ class LangChainCog(commands.Cog):
     async def websites(self, ctx, *, args):
         await working(self.bot)
         urls = args.split(",")
-        loaders = UnstructuredURLLoader(urls=urls)
+        loaders = UnstructuredURLLoader(urls=urls, strategy="fast")
         data = loaders.load()
         text_splitter = CharacterTextSplitter(separator='\n',
                                               chunk_size=1000,
                                               chunk_overlap=200)
 
         docs = text_splitter.split_documents(data)
-        await ctx.send(f"Docs: {docs.len}")
+        await ctx.send(f"Num Docs: {len(docs)}")
+        if not docs:
+            await ctx.send("No documents found.")
+            return
+
         embeddings = OpenAIEmbeddings()
         vectorStore_openAI = FAISS.from_documents(docs, embeddings)
 
