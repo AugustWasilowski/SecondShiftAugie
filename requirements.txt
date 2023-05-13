@@ -1,5 +1,5 @@
 elevenlabs==0.2.12
-langchain==0.0.166
+langchain==0.0.167
 nextcord==2.4.2
 openai==0.27.6
 PyDrive==1.3.1
@@ -15,8 +15,9 @@ rel~=0.4.8
 websockets~=11.0.3
 asyncio~=3.4.3
 spotipy~=2.23.0
-duckduckgo-search==2.9.4
+duckduckgo-search==2.9.5
 arxiv
 google-cloud-language
 pdfminer.six
 cffi
+steamship
