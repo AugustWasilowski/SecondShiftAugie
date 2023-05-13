@@ -5,13 +5,14 @@ import sys
 
 import nextcord
 import openai
+import pkg_resources
 from dotenv import load_dotenv
 from elevenlabs import set_api_key
 from nextcord.ext import commands
 from pytube import YouTube, exceptions as pytube_exceptions
 
 from cogs.googlestuff import upload_to_drive
-from cogs.ssa import play_latest_voice_sample, SSAWrapper
+from cogs.ssa import play_latest_voice_sample, SSAWrapper, run_discord_bot
 from cogs.status import wait_for_orders, working
 
 load_dotenv()  # load environment variables from .env file
@@ -24,7 +25,7 @@ VOICE_CHANNEL_ID = os.getenv(
 )  # SSA will join this channel id when asked to !join
 SAVE_PATH = os.getenv("SAVE_PATH")  # where SSA saves audio and other temp files TODO: use tmpfile
 HELP_MSG = (
-        f"""
+    f"""
             You can interact with Second Shift Augie using various commands and by @ing the chatbot in the chat. Some commands you can use are:
             \n!youtube <YOUTUBE>: Use this command to get a short summary of a YouTube video. Paste the whole youtube link after the command. 
             \n!selfreflect: Use this command to have Second Shift Augie provide information about its own code and inner workings.
@@ -33,7 +34,8 @@ HELP_MSG = (
 )
 
 MOTD = (
-    "Second Shift Augie! Reporting for Duty! Please wait while I finish booting up..."  # Announcement every time SSA boots up.
+    "Second Shift Augie! Reporting for Duty! Please wait while I finish booting up..."
+# Announcement every time SSA boots up.
 )
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -78,6 +80,24 @@ intents = nextcord.Intents.default()
 client = nextcord.Client(intents=intents)
 
 
+def check_version() -> None:
+    # Read the requirements.txt file and add each line to a list
+    with open('requirements.txt') as f:
+        required = f.read().splitlines()
+
+    # For each library listed in requirements.txt, check if the corresponding version is installed
+    for package in required:
+        # Use the pkg_resources library to get information about the installed version of the library
+        package_name, package_version = package.split('==')
+        installed = pkg_resources.get_distribution(package_name)
+        # Extract the library name and version number
+        name, version = installed.project_name, installed.version
+        # Compare the version number to see if it matches the one in requirements.txt
+        if package != f'{name}=={version}':
+            logger.error(f'{name} version {version} is installed but does not match the requirements')
+            sys.exit()
+
+
 def progress_func(stream=None, chunk=None, file_handle=None, remaining=None):
     """progress call back function for the Summarize function"""
     logger.info("progressing...")
@@ -113,6 +133,7 @@ async def on_ready():
     game = nextcord.Game("Booting up...")
     await bot.change_presence(status=nextcord.Status.do_not_disturb, activity=game)
     await register_cogs()  # load cog modules
+    run_discord_bot()
     await working(bot, "Reticulating splines")  # set to busy while we set up.
 
     # finalize on ready by setting status to ready and sending the MOTD
@@ -120,7 +141,6 @@ async def on_ready():
     # Set the narrative for the SSAWrapper instance
     await channel.send(MOTD)
     await channel.send(await augie.set_narrative())
-
     await wait_for_orders(bot)
 
 
@@ -265,4 +285,6 @@ async def on_message(message):
 
 
 if __name__ == "__main__":
+    # check_version()
+
     bot.run(BOT_TOKEN)
