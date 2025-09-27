@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import sys
+import signal
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +32,12 @@ from src.bot.config import BotConfig
 from src.bot.message_router import MessageRouter
 from src.bot.commands import BotCommands
 from src.audio.audio_manager import AudioManager
+
+# Import error handling utilities
+from src.utils.error_handler import (
+    health_monitor, degradation_manager, log_component_error, log_component_recovery,
+    ErrorSeverity, ComponentState, retry_with_backoff
+)
 
 
 # Configure logging
@@ -58,8 +65,36 @@ class SecondShiftAugieBot:
         self.message_router: Optional[MessageRouter] = None
         self.bot_commands: Optional[BotCommands] = None
         self._shutdown_event = asyncio.Event()
+        self._shutdown_requested = False
+        
+        # Initialize component health monitoring
+        health_monitor.update_component_state("main_app", ComponentState.HEALTHY)
+        
+        # Set up signal handlers for graceful shutdown
+        self._setup_signal_handlers()
         
         logger.info("SecondShiftAugie bot application initialized")
+    
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        def signal_handler(signum, frame):
+            logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+            self._shutdown_requested = True
+            if not self._shutdown_event.is_set():
+                asyncio.create_task(self._trigger_shutdown())
+        
+        # Set up signal handlers (Windows compatible)
+        try:
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+            if hasattr(signal, 'SIGBREAK'):  # Windows
+                signal.signal(signal.SIGBREAK, signal_handler)
+        except Exception as e:
+            logger.warning(f"Could not set up signal handlers: {e}")
+    
+    async def _trigger_shutdown(self):
+        """Trigger shutdown event."""
+        self._shutdown_event.set()
     
     def load_configuration(self) -> bool:
         """Load configuration from environment variables.
@@ -126,91 +161,241 @@ class SecondShiftAugieBot:
             bool: True if all requirements are met, False otherwise
         """
         try:
-            # Check if reference audio file exists
+            logger.info("Validating startup requirements...")
+            validation_errors = []
+            
+            # Check if reference audio file exists and is valid
             if not os.path.exists(self.tts_config.prompt_wav_path):
-                logger.error(f"Reference audio file not found: {self.tts_config.prompt_wav_path}")
-                logger.error("VoxCPM will be disabled - voice generation not available")
-                return False
+                error_msg = f"Reference audio file not found: {self.tts_config.prompt_wav_path}"
+                logger.error(error_msg)
+                validation_errors.append(error_msg)
+            else:
+                try:
+                    # Validate audio file format and accessibility
+                    import soundfile as sf
+                    with sf.SoundFile(self.tts_config.prompt_wav_path) as f:
+                        if f.frames == 0:
+                            error_msg = f"Reference audio file is empty: {self.tts_config.prompt_wav_path}"
+                            logger.error(error_msg)
+                            validation_errors.append(error_msg)
+                        else:
+                            logger.info(f"Reference audio validated: {f.frames} frames, {f.samplerate} Hz")
+                            
+                except Exception as audio_error:
+                    error_msg = f"Reference audio file validation failed: {audio_error}"
+                    logger.error(error_msg)
+                    validation_errors.append(error_msg)
             
-            # Check if reference text file exists
+            # Check if reference text file exists and is valid
             if not os.path.exists(self.tts_config.prompt_text_path):
-                logger.error(f"Reference text file not found: {self.tts_config.prompt_text_path}")
-                logger.error("VoxCPM will be disabled - voice generation not available")
-                return False
+                error_msg = f"Reference text file not found: {self.tts_config.prompt_text_path}"
+                logger.error(error_msg)
+                validation_errors.append(error_msg)
+            else:
+                try:
+                    with open(self.tts_config.prompt_text_path, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                        if not content:
+                            error_msg = f"Reference text file is empty: {self.tts_config.prompt_text_path}"
+                            logger.error(error_msg)
+                            validation_errors.append(error_msg)
+                        elif len(content) < 10:
+                            logger.warning(f"Reference text is very short ({len(content)} chars) - may affect voice quality")
+                        else:
+                            logger.info(f"Reference text validated: {len(content)} characters")
+                            
+                except UnicodeDecodeError as encoding_error:
+                    error_msg = f"Reference text file encoding error: {encoding_error}"
+                    logger.error(error_msg)
+                    validation_errors.append(error_msg)
+                except Exception as text_error:
+                    error_msg = f"Error reading reference text file: {text_error}"
+                    logger.error(error_msg)
+                    validation_errors.append(error_msg)
             
-            # Validate reference text file is not empty
+            # Ensure save directory exists and is writable
             try:
-                with open(self.tts_config.prompt_text_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    if not content:
-                        logger.error("Reference text file is empty")
-                        logger.error("VoxCPM will be disabled - voice generation not available")
-                        return False
-            except Exception as e:
-                logger.error(f"Error reading reference text file: {e}")
+                os.makedirs(self.tts_config.save_path, exist_ok=True)
+                
+                # Test write permissions
+                test_file = os.path.join(self.tts_config.save_path, "test_write.tmp")
+                try:
+                    with open(test_file, 'w') as f:
+                        f.write("test")
+                    os.remove(test_file)
+                    logger.info(f"Save directory validated: {self.tts_config.save_path}")
+                except Exception as write_error:
+                    error_msg = f"Save directory not writable: {write_error}"
+                    logger.error(error_msg)
+                    validation_errors.append(error_msg)
+                    
+            except Exception as dir_error:
+                error_msg = f"Cannot create save directory: {dir_error}"
+                logger.error(error_msg)
+                validation_errors.append(error_msg)
+            
+            # Check for VoxCPM dependencies
+            try:
+                import voxcpm
+                logger.info("VoxCPM module available")
+            except ImportError:
+                error_msg = "VoxCPM module not installed - voice generation will be unavailable"
+                logger.warning(error_msg)
+                validation_errors.append(error_msg)
+            except Exception as import_error:
+                error_msg = f"VoxCPM import error: {import_error}"
+                logger.warning(error_msg)
+                validation_errors.append(error_msg)
+            
+            # Check for FFmpeg (required for Discord audio)
+            try:
+                import subprocess
+                result = subprocess.run(['ffmpeg', '-version'], 
+                                      capture_output=True, 
+                                      timeout=5,
+                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                if result.returncode == 0:
+                    logger.info("FFmpeg available for audio processing")
+                else:
+                    logger.warning("FFmpeg may not be properly installed")
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                logger.warning("FFmpeg not found - audio playback may not work")
+            except Exception as ffmpeg_error:
+                logger.warning(f"FFmpeg check failed: {ffmpeg_error}")
+            
+            # Report validation results
+            if validation_errors:
+                logger.error("Startup validation failed with the following errors:")
+                for i, error in enumerate(validation_errors, 1):
+                    logger.error(f"  {i}. {error}")
+                logger.error("VoxCPM will be disabled - bot will operate in text-only mode")
                 return False
-            
-            # Ensure save directory exists
-            os.makedirs(self.tts_config.save_path, exist_ok=True)
-            
-            logger.info("Startup requirements validation passed")
-            return True
+            else:
+                logger.info("All startup requirements validation passed")
+                return True
             
         except Exception as e:
-            logger.error(f"Error validating startup requirements: {e}")
+            logger.error(f"Unexpected error validating startup requirements: {e}")
             return False
     
     async def initialize_components(self) -> bool:
-        """Initialize all bot components.
+        """Initialize all bot components with comprehensive error handling.
+        
+        Requirements 4.1, 4.2: Graceful fallback and proper error logging.
         
         Returns:
-            bool: True if all components initialized successfully, False otherwise
+            bool: True if critical components initialized successfully, False otherwise
         """
         try:
             # Initialize audio manager first (no dependencies)
             logger.info("Initializing audio manager...")
-            self.audio_manager = AudioManager(self.config.save_path)
+            try:
+                self.audio_manager = AudioManager(self.config.save_path)
+                health_monitor.update_component_state("audio_manager", ComponentState.HEALTHY)
+                log_component_recovery("audio_manager", "initialization")
+            except Exception as e:
+                log_component_error("audio_manager", "initialization", e, ErrorSeverity.HIGH)
+                logger.error("Audio manager initialization failed - audio features will be unavailable")
+                degradation_manager.disable_feature("audio_playback", "Audio manager initialization failed")
+                return False  # Audio manager is critical
             
-            # Initialize VoxCPM TTS engine
+            # Initialize VoxCPM TTS engine with graceful degradation
             logger.info("Initializing VoxCPM TTS engine...")
-            self.tts_engine = VoxCPMEngine(self.tts_config)
+            try:
+                self.tts_engine = VoxCPMEngine(self.tts_config)
+                
+                # Attempt to initialize VoxCPM (Requirement 4.1: graceful fallback)
+                tts_ready = await retry_with_backoff(
+                    lambda: self.tts_engine.initialize(),
+                    max_retries=2,
+                    base_delay=2.0
+                )
+                
+                if not tts_ready:
+                    logger.warning("VoxCPM TTS engine failed to initialize - continuing in text-only mode")
+                    health_monitor.update_component_state("tts_engine", ComponentState.FAILED)
+                    degradation_manager.disable_feature("voice_generation", "VoxCPM initialization failed")
+                    degradation_manager.enable_degraded_mode("bot_responses", "text-only responses")
+                else:
+                    logger.info("VoxCPM TTS engine initialized successfully")
+                    health_monitor.update_component_state("tts_engine", ComponentState.HEALTHY)
+                    log_component_recovery("tts_engine", "initialization")
+                    
+            except Exception as e:
+                log_component_error("tts_engine", "initialization", e, ErrorSeverity.MEDIUM)
+                logger.warning("VoxCPM TTS engine initialization failed - continuing in text-only mode")
+                health_monitor.update_component_state("tts_engine", ComponentState.FAILED)
+                degradation_manager.disable_feature("voice_generation", f"TTS initialization error: {str(e)}")
+                degradation_manager.enable_degraded_mode("bot_responses", "text-only responses")
+                # Continue without TTS - not critical for basic bot operation
             
-            # Attempt to initialize VoxCPM (Requirement 4.1: graceful fallback)
-            tts_ready = await self.tts_engine.initialize()
-            if not tts_ready:
-                logger.warning("VoxCPM TTS engine failed to initialize - continuing in text-only mode")
-                logger.warning("Voice responses will not be available")
-            else:
-                logger.info("VoxCPM TTS engine initialized successfully")
-            
-            # Initialize Discord bot manager
+            # Initialize Discord bot manager (critical component)
             logger.info("Initializing Discord bot manager...")
-            self.bot_manager = DiscordBotManager(self.config)
+            try:
+                self.bot_manager = DiscordBotManager(self.config)
+                health_monitor.update_component_state("discord_manager", ComponentState.HEALTHY)
+                log_component_recovery("discord_manager", "initialization")
+            except Exception as e:
+                log_component_error("discord_manager", "initialization", e, ErrorSeverity.CRITICAL)
+                logger.error("Discord bot manager initialization failed - cannot continue")
+                return False  # Discord manager is critical
             
             # Initialize message router
             logger.info("Initializing message router...")
-            self.message_router = MessageRouter(
-                self.tts_engine,
-                self.audio_manager,
-                self.bot_manager
-            )
+            try:
+                self.message_router = MessageRouter(
+                    self.tts_engine,
+                    self.audio_manager,
+                    self.bot_manager
+                )
+                health_monitor.update_component_state("message_router", ComponentState.HEALTHY)
+                log_component_recovery("message_router", "initialization")
+            except Exception as e:
+                log_component_error("message_router", "initialization", e, ErrorSeverity.CRITICAL)
+                logger.error("Message router initialization failed - cannot continue")
+                return False  # Message router is critical
             
             # Initialize command system
             logger.info("Initializing command system...")
-            self.bot_commands = BotCommands(
-                self.bot_manager,
-                self.tts_engine,
-                self.audio_manager
-            )
+            try:
+                self.bot_commands = BotCommands(
+                    self.bot_manager,
+                    self.tts_engine,
+                    self.audio_manager
+                )
+                health_monitor.update_component_state("command_system", ComponentState.HEALTHY)
+                log_component_recovery("command_system", "initialization")
+            except Exception as e:
+                log_component_error("command_system", "initialization", e, ErrorSeverity.HIGH)
+                logger.warning("Command system initialization failed - commands may not work properly")
+                degradation_manager.disable_feature("bot_commands", f"Command system error: {str(e)}")
+                # Continue without full command system - basic functionality may still work
             
             # Set up Discord bot event handlers and commands
-            self._setup_discord_handlers()
+            try:
+                self._setup_discord_handlers()
+                logger.info("Discord event handlers set up successfully")
+            except Exception as e:
+                log_component_error("discord_handlers", "setup", e, ErrorSeverity.HIGH)
+                logger.error("Discord event handler setup failed - bot may not respond properly")
+                # Continue anyway - some functionality might still work
             
-            logger.info("All components initialized successfully")
+            # Log final component status
+            health_summary = health_monitor.get_system_health_summary()
+            logger.info(f"Component initialization complete - System health: {health_summary['overall_health']}")
+            logger.info(f"Components: {health_summary['healthy']} healthy, {health_summary['degraded']} degraded, {health_summary['failed']} failed")
+            
+            # Log feature availability
+            if not degradation_manager.is_feature_available("voice_generation"):
+                logger.warning("Voice generation disabled - bot will operate in text-only mode")
+            if not degradation_manager.is_feature_available("audio_playback"):
+                logger.warning("Audio playback disabled - no voice channel functionality")
+            
             return True
             
         except Exception as e:
-            logger.error(f"Error initializing components: {e}")
+            log_component_error("main_app", "component_initialization", e, ErrorSeverity.CRITICAL)
+            logger.error(f"Critical error initializing components: {e}")
             return False
     
     def _setup_discord_handlers(self):
@@ -220,61 +405,188 @@ class SecondShiftAugieBot:
         # Event handlers
         @bot.event
         async def on_ready():
-            """Handle bot ready event."""
-            logger.info(f"Bot logged in as {bot.user} (ID: {bot.user.id})")
+            """Handle bot ready event with comprehensive error handling.
             
-            # Set bot status
-            activity = nextcord.Activity(
-                type=nextcord.ActivityType.listening,
-                name="voice commands | !help"
-            )
-            await bot.change_presence(
-                status=nextcord.Status.online,
-                activity=activity
-            )
-            
-            # Send startup message to configured channel
+            Requirements 4.2: Proper error logging for debugging.
+            """
             try:
-                channel = bot.get_channel(self.config.channel_id)
-                if channel:
-                    startup_msg = (
-                        "🤖 **SecondShiftAugie** reporting for duty!\n"
-                        f"🎤 VoxCPM TTS: {'✅ Ready' if self.tts_engine.is_ready() else '❌ Disabled'}\n"
-                        "💬 Mention me for responses, use `!help` for commands!"
+                logger.info(f"Bot logged in as {bot.user} (ID: {bot.user.id})")
+                logger.info(f"Bot is in {len(bot.guilds)} guilds")
+                
+                # Set bot status with error handling
+                try:
+                    activity = nextcord.Activity(
+                        type=nextcord.ActivityType.listening,
+                        name="voice commands | !help"
                     )
-                    await channel.send(startup_msg)
-            except Exception as e:
-                logger.warning(f"Could not send startup message: {e}")
+                    await bot.change_presence(
+                        status=nextcord.Status.online,
+                        activity=activity
+                    )
+                    logger.info("Bot status set successfully")
+                except Exception as status_error:
+                    logger.warning(f"Could not set bot status: {status_error}")
+                
+                # Send startup message to configured channel
+                try:
+                    channel = bot.get_channel(self.config.channel_id)
+                    if channel:
+                        # Check if we have permission to send messages
+                        try:
+                            permissions = channel.permissions_for(channel.guild.me)
+                            if not permissions.send_messages:
+                                logger.warning(f"Bot lacks permission to send messages in channel: {channel.name}")
+                                return
+                        except Exception as perm_error:
+                            logger.warning(f"Could not check channel permissions: {perm_error}")
+                        
+                        startup_msg = (
+                            "🤖 **SecondShiftAugie** reporting for duty!\n"
+                            f"🎤 VoxCPM TTS: {'✅ Ready' if self.tts_engine.is_ready() else '❌ Disabled'}\n"
+                            "💬 Mention me for responses, use `!help` for commands!"
+                        )
+                        
+                        await channel.send(startup_msg)
+                        logger.info(f"Startup message sent to channel: {channel.name}")
+                        
+                    else:
+                        logger.warning(f"Configured channel not found: {self.config.channel_id}")
+                        
+                except nextcord.HTTPException as http_error:
+                    logger.warning(f"HTTP error sending startup message: {http_error}")
+                except nextcord.Forbidden:
+                    logger.warning("Bot lacks permission to send startup message")
+                except Exception as startup_error:
+                    logger.warning(f"Could not send startup message: {startup_error}")
+                
+            except Exception as ready_error:
+                logger.error(f"Error in on_ready handler: {ready_error}")
+        
+        @bot.event
+        async def on_disconnect():
+            """Handle bot disconnect event."""
+            logger.warning("Bot disconnected from Discord")
+        
+        @bot.event
+        async def on_resumed():
+            """Handle bot resume event."""
+            logger.info("Bot connection resumed")
+        
+        @bot.event
+        async def on_error(event, *args, **kwargs):
+            """Handle Discord.py errors.
+            
+            Requirements 4.2: Proper error logging for debugging.
+            """
+            logger.error(f"Discord.py error in event '{event}': {args}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         @bot.event
         async def on_message(message):
-            """Handle incoming messages."""
-            # Process commands first
-            await bot.process_commands(message)
+            """Handle incoming messages with comprehensive error handling.
             
-            # Route non-command messages through message router
-            if not message.content.startswith(self.config.command_prefix):
-                response = await self.message_router.route_message(message)
+            Requirements 4.2: Proper error logging for debugging.
+            """
+            try:
+                # Process commands first
+                await bot.process_commands(message)
                 
-                # Send text response if available
-                if response.text_response:
-                    # Add audio status indicator to text response if audio was played
-                    text_to_send = response.text_response
-                    if response.should_play_audio and response.audio_response and response.audio_response.success:
-                        text_to_send += " 🎤"  # Indicate audio was played
-                    
-                    await message.reply(text_to_send, mention_author=True)
+                # Route non-command messages through message router
+                if not message.content.startswith(self.config.command_prefix):
+                    try:
+                        response = await self.message_router.route_message(message)
+                        
+                        # Send text response if available
+                        if response.text_response:
+                            try:
+                                # Add audio status indicator to text response if audio was played
+                                text_to_send = response.text_response
+                                if response.should_play_audio and response.audio_response and response.audio_response.success:
+                                    text_to_send += " 🎤"  # Indicate audio was played
+                                
+                                await message.reply(text_to_send, mention_author=True)
+                                
+                            except nextcord.HTTPException as http_error:
+                                logger.error(f"HTTP error sending message reply: {http_error}")
+                                # Try sending without reply if reply fails
+                                try:
+                                    await message.channel.send(response.text_response)
+                                except Exception as fallback_error:
+                                    logger.error(f"Failed to send fallback message: {fallback_error}")
+                                    
+                            except nextcord.Forbidden:
+                                logger.error("Bot lacks permission to send messages in this channel")
+                                
+                            except Exception as send_error:
+                                logger.error(f"Error sending message reply: {send_error}")
+                        
+                    except Exception as route_error:
+                        logger.error(f"Error routing message: {route_error}")
+                        # Try to send an error message to the user
+                        try:
+                            if message.author != bot.user:  # Don't reply to ourselves
+                                await message.reply("Sorry, I encountered an error processing your message.", mention_author=True)
+                        except:
+                            pass  # If we can't send error message, just log it
+                            
+            except Exception as message_error:
+                logger.error(f"Unexpected error in on_message handler: {message_error}")
+                # Don't try to send a message here as it might cause recursion
         
         @bot.event
         async def on_command_error(ctx, error):
-            """Handle command errors."""
-            if isinstance(error, commands.CommandNotFound):
-                await ctx.send(f"❌ Unknown command. Use `{self.config.command_prefix}help` for available commands.")
-            elif isinstance(error, commands.MissingRequiredArgument):
-                await ctx.send(f"❌ Missing required argument. Use `{self.config.command_prefix}help` for usage.")
-            else:
-                logger.error(f"Command error: {error}")
-                await ctx.send("❌ An error occurred while processing the command.")
+            """Handle command errors with comprehensive logging and user feedback.
+            
+            Requirements 4.2: Proper error logging for debugging.
+            """
+            try:
+                # Log all command errors for debugging
+                logger.error(f"Command error in '{ctx.command}' by {ctx.author}: {error}")
+                
+                if isinstance(error, commands.CommandNotFound):
+                    await ctx.send(f"❌ Unknown command. Use `{self.config.command_prefix}help` for available commands.")
+                    
+                elif isinstance(error, commands.MissingRequiredArgument):
+                    await ctx.send(f"❌ Missing required argument for `{ctx.command}`. Use `{self.config.command_prefix}help` for usage.")
+                    
+                elif isinstance(error, commands.BadArgument):
+                    await ctx.send(f"❌ Invalid argument for `{ctx.command}`. Use `{self.config.command_prefix}help` for usage.")
+                    
+                elif isinstance(error, commands.CommandOnCooldown):
+                    await ctx.send(f"❌ Command is on cooldown. Try again in {error.retry_after:.1f} seconds.")
+                    
+                elif isinstance(error, commands.MissingPermissions):
+                    await ctx.send("❌ You don't have permission to use this command.")
+                    
+                elif isinstance(error, commands.BotMissingPermissions):
+                    missing_perms = ", ".join(error.missing_permissions)
+                    await ctx.send(f"❌ I'm missing required permissions: {missing_perms}")
+                    logger.error(f"Bot missing permissions: {missing_perms}")
+                    
+                elif isinstance(error, commands.NoPrivateMessage):
+                    await ctx.send("❌ This command cannot be used in private messages.")
+                    
+                elif isinstance(error, commands.DisabledCommand):
+                    await ctx.send("❌ This command is currently disabled.")
+                    
+                elif isinstance(error, commands.CommandInvokeError):
+                    # Log the original error for debugging
+                    logger.error(f"Command invoke error: {error.original}")
+                    await ctx.send("❌ An internal error occurred while processing the command.")
+                    
+                else:
+                    # Unknown error type
+                    logger.error(f"Unhandled command error type {type(error).__name__}: {error}")
+                    await ctx.send("❌ An unexpected error occurred while processing the command.")
+                    
+            except Exception as handler_error:
+                logger.error(f"Error in command error handler: {handler_error}")
+                # Try to send a basic error message
+                try:
+                    await ctx.send("❌ A critical error occurred.")
+                except:
+                    pass  # If we can't even send a message, just log it
         
         # Register commands
         @bot.command(name='join')
@@ -301,38 +613,148 @@ class SecondShiftAugieBot:
         async def status_cmd(ctx):
             """Show bot status."""
             await self.bot_commands.status_command(ctx)
+        
+        @bot.command(name='health')
+        async def health_cmd(ctx):
+            """Show detailed system health information."""
+            try:
+                # Get system health summary
+                health_summary = health_monitor.get_system_health_summary()
+                
+                # Create detailed health report
+                embed = nextcord.Embed(
+                    title="🏥 System Health Report",
+                    color=0x00ff00 if health_summary['overall_health'] == 'HEALTHY' else 
+                          0xff9900 if health_summary['overall_health'] == 'DEGRADED' else 0xff0000
+                )
+                
+                # Overall health
+                embed.add_field(
+                    name="Overall Health",
+                    value=f"**{health_summary['overall_health']}**",
+                    inline=False
+                )
+                
+                # Component summary
+                embed.add_field(
+                    name="Components",
+                    value=(
+                        f"✅ Healthy: {health_summary['healthy']}\n"
+                        f"⚠️ Degraded: {health_summary['degraded']}\n"
+                        f"❌ Failed: {health_summary['failed']}"
+                    ),
+                    inline=True
+                )
+                
+                # Feature availability
+                features_status = []
+                for feature in ["voice_generation", "audio_playback", "bot_commands", "bot_responses"]:
+                    status = degradation_manager.get_feature_status(feature)
+                    icon = "✅" if status == "NORMAL" else "⚠️" if status == "DEGRADED" else "❌"
+                    features_status.append(f"{icon} {feature.replace('_', ' ').title()}: {status}")
+                
+                embed.add_field(
+                    name="Features",
+                    value="\n".join(features_status),
+                    inline=True
+                )
+                
+                # Add timestamp
+                embed.timestamp = nextcord.utils.utcnow()
+                embed.set_footer(text="Health check performed")
+                
+                await ctx.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error in health command: {e}")
+                await ctx.send("❌ Error retrieving health information.")
     
     async def start(self) -> bool:
-        """Start the bot application.
+        """Start the bot application with comprehensive error handling.
+        
+        Requirements 4.1, 4.2: Graceful fallback and proper error logging.
         
         Returns:
             bool: True if started successfully, False otherwise
         """
         try:
             logger.info("Starting SecondShiftAugie bot...")
+            logger.info(f"Python version: {sys.version}")
+            logger.info(f"Platform: {sys.platform}")
             
-            # Load configuration
+            # Load configuration with detailed error reporting
+            logger.info("Loading configuration...")
             if not self.load_configuration():
-                logger.error("Failed to load configuration")
+                logger.error("Failed to load configuration - cannot continue")
+                logger.error("Please check your .env file and environment variables")
                 return False
             
-            # Validate startup requirements
-            if not self.validate_startup_requirements():
+            logger.info("Configuration loaded successfully")
+            logger.info(f"Bot will use command prefix: {self.config.command_prefix}")
+            logger.info(f"Target channel ID: {self.config.channel_id}")
+            
+            # Validate startup requirements (non-blocking for graceful degradation)
+            logger.info("Validating startup requirements...")
+            requirements_valid = self.validate_startup_requirements()
+            if not requirements_valid:
                 logger.warning("Startup validation failed - continuing with limited functionality")
+                logger.warning("VoxCPM features will be disabled, but basic Discord functionality will work")
+            else:
+                logger.info("All startup requirements validated successfully")
             
-            # Initialize components
+            # Initialize components with error handling
+            logger.info("Initializing bot components...")
             if not await self.initialize_components():
-                logger.error("Failed to initialize components")
+                logger.error("Failed to initialize critical components - cannot continue")
                 return False
             
-            # Start the Discord bot
-            logger.info("Starting Discord bot...")
-            await self.bot_manager.start()
+            logger.info("All components initialized successfully")
             
-            return True
+            # Start the Discord bot with connection retry logic
+            logger.info("Connecting to Discord...")
+            max_retries = 3
+            retry_delay = 5
             
+            for attempt in range(max_retries):
+                try:
+                    await self.bot_manager.start()
+                    logger.info("Successfully connected to Discord")
+                    return True
+                    
+                except nextcord.LoginFailure as login_error:
+                    logger.error(f"Discord login failed: {login_error}")
+                    logger.error("Please check your bot token in the .env file")
+                    return False
+                    
+                except nextcord.HTTPException as http_error:
+                    logger.error(f"Discord HTTP error (attempt {attempt + 1}/{max_retries}): {http_error}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                    else:
+                        logger.error("Max retries exceeded - giving up")
+                        return False
+                        
+                except Exception as connect_error:
+                    logger.error(f"Unexpected connection error (attempt {attempt + 1}/{max_retries}): {connect_error}")
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay} seconds...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                    else:
+                        logger.error("Max retries exceeded - giving up")
+                        return False
+            
+            return False
+            
+        except KeyboardInterrupt:
+            logger.info("Startup interrupted by user")
+            return False
         except Exception as e:
-            logger.error(f"Error starting bot: {e}")
+            logger.error(f"Unexpected error starting bot: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
     
     async def stop(self):
@@ -360,23 +782,120 @@ class SecondShiftAugieBot:
             logger.error(f"Error stopping bot: {e}")
     
     async def run(self):
-        """Run the bot application with proper error handling."""
+        """Run the bot application with comprehensive error handling and monitoring."""
         try:
+            logger.info("Starting bot application run cycle...")
+            
             # Start the bot
             success = await self.start()
             if not success:
-                logger.error("Failed to start bot")
+                logger.error("Failed to start bot - exiting")
+                health_monitor.update_component_state("main_app", ComponentState.FAILED)
                 return
             
-            # Wait for shutdown signal
-            await self._shutdown_event.wait()
+            logger.info("Bot started successfully - entering main loop")
+            health_monitor.update_component_state("main_app", ComponentState.HEALTHY)
+            
+            # Start periodic health monitoring
+            health_task = asyncio.create_task(self._periodic_health_check())
+            
+            try:
+                # Wait for shutdown signal or health task completion
+                done, pending = await asyncio.wait(
+                    [self._shutdown_event.wait(), health_task],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                
+                # Cancel pending tasks
+                for task in pending:
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                
+                if self._shutdown_requested:
+                    logger.info("Shutdown requested - stopping bot")
+                else:
+                    logger.info("Main loop completed")
+                    
+            except Exception as loop_error:
+                logger.error(f"Error in main loop: {loop_error}")
+                health_monitor.update_component_state("main_app", ComponentState.FAILED)
             
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt")
+            self._shutdown_requested = True
         except Exception as e:
-            logger.error(f"Unexpected error in main loop: {e}")
+            logger.error(f"Unexpected error in run method: {e}")
+            health_monitor.update_component_state("main_app", ComponentState.FAILED)
+            import traceback
+            logger.error(traceback.format_exc())
         finally:
+            logger.info("Initiating bot shutdown...")
             await self.stop()
+    
+    async def _periodic_health_check(self):
+        """Perform periodic health checks and component monitoring."""
+        check_interval = 300  # 5 minutes
+        
+        while not self._shutdown_requested:
+            try:
+                await asyncio.sleep(check_interval)
+                
+                if self._shutdown_requested:
+                    break
+                
+                logger.debug("Performing periodic health check...")
+                
+                # Check component health
+                await self._check_component_health()
+                
+                # Log health summary
+                health_summary = health_monitor.get_system_health_summary()
+                logger.info(f"Health check: {health_summary['overall_health']} "
+                          f"({health_summary['healthy']}H/{health_summary['degraded']}D/{health_summary['failed']}F)")
+                
+            except asyncio.CancelledError:
+                logger.debug("Health check task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in periodic health check: {e}")
+                await asyncio.sleep(60)  # Wait before retrying
+    
+    async def _check_component_health(self):
+        """Check the health of all components."""
+        try:
+            # Check TTS engine
+            if self.tts_engine:
+                if self.tts_engine.is_ready():
+                    health_monitor.update_component_state("tts_engine", ComponentState.HEALTHY)
+                else:
+                    health_monitor.update_component_state("tts_engine", ComponentState.FAILED)
+            
+            # Check Discord bot manager
+            if self.bot_manager:
+                if self.bot_manager.is_ready():
+                    health_monitor.update_component_state("discord_manager", ComponentState.HEALTHY)
+                else:
+                    health_monitor.update_component_state("discord_manager", ComponentState.DEGRADED)
+            
+            # Check audio manager queue
+            if self.audio_manager:
+                # Simple health check - if queue processor is running
+                if (self.audio_manager._queue_processor_task and 
+                    not self.audio_manager._queue_processor_task.done()):
+                    health_monitor.update_component_state("audio_manager", ComponentState.HEALTHY)
+                else:
+                    health_monitor.update_component_state("audio_manager", ComponentState.DEGRADED)
+                    logger.warning("Audio queue processor not running - attempting restart")
+                    try:
+                        self.audio_manager._start_queue_processor()
+                    except Exception as e:
+                        logger.error(f"Failed to restart audio queue processor: {e}")
+            
+        except Exception as e:
+            logger.error(f"Error checking component health: {e}")
 
 
 async def main():

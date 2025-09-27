@@ -271,6 +271,7 @@ class AudioManager:
         Play audio file in Discord voice channel through the bot manager.
         
         Uses audio queuing to handle multiple simultaneous requests (Requirement 2.4).
+        Implements comprehensive error handling for graceful degradation.
         
         Args:
             bot_manager: Discord bot manager instance
@@ -280,27 +281,75 @@ class AudioManager:
             bool: True if audio was played successfully, False otherwise
         """
         try:
+            # Validate audio file exists and is accessible
             if not os.path.exists(audio_path):
                 logger.error(f"Audio file not found: {audio_path}")
+                return False
+            
+            # Check file size and format
+            try:
+                file_size = os.path.getsize(audio_path)
+                if file_size == 0:
+                    logger.error(f"Audio file is empty: {audio_path}")
+                    return False
+                if file_size > 100 * 1024 * 1024:  # 100MB limit
+                    logger.error(f"Audio file too large ({file_size / 1024 / 1024:.1f}MB): {audio_path}")
+                    return False
+            except Exception as file_error:
+                logger.error(f"Error checking audio file: {file_error}")
+                return False
+            
+            # Validate bot manager state
+            if not bot_manager:
+                logger.error("Bot manager is None")
                 return False
             
             if not bot_manager.is_in_voice_channel():
                 logger.warning("Bot is not in a voice channel, cannot play audio")
                 return False
             
-            # Create a future to get the result
-            result_future = asyncio.Future()
+            # Check if queue processor is running
+            if not self._queue_processor_task or self._queue_processor_task.done():
+                logger.warning("Audio queue processor not running, restarting...")
+                self._start_queue_processor()
+                # Give it a moment to start
+                await asyncio.sleep(0.1)
             
-            # Add to queue for processing
-            await self._audio_queue.put((bot_manager, audio_path, result_future))
-            logger.debug(f"Added audio to queue: {audio_path}")
-            
-            # Wait for the result
-            success = await result_future
-            return success
+            try:
+                # Create a future to get the result with timeout
+                result_future = asyncio.Future()
+                
+                # Add to queue for processing with timeout
+                try:
+                    await asyncio.wait_for(
+                        self._audio_queue.put((bot_manager, audio_path, result_future)),
+                        timeout=5.0
+                    )
+                    logger.debug(f"Added audio to queue: {os.path.basename(audio_path)}")
+                except asyncio.TimeoutError:
+                    logger.error("Timeout adding audio to queue - queue may be full")
+                    return False
+                
+                # Wait for the result with timeout
+                try:
+                    success = await asyncio.wait_for(result_future, timeout=30.0)
+                    return success
+                except asyncio.TimeoutError:
+                    logger.error("Timeout waiting for audio playback result")
+                    return False
+                
+            except Exception as queue_error:
+                logger.error(f"Error with audio queue: {queue_error}")
+                # Try direct playback as fallback
+                logger.info("Attempting direct audio playback as fallback...")
+                try:
+                    return await self._play_audio_immediate(bot_manager, audio_path)
+                except Exception as fallback_error:
+                    logger.error(f"Fallback audio playback failed: {fallback_error}")
+                    return False
             
         except Exception as e:
-            logger.error(f"Error queuing audio for voice channel: {e}")
+            logger.error(f"Unexpected error in play_in_voice_channel: {e}")
             return False
     
     async def stop_queue_processor(self):
