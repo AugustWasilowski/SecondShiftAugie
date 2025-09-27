@@ -33,6 +33,9 @@ from src.bot.message_router import MessageRouter
 from src.bot.commands import BotCommands
 from src.audio.audio_manager import AudioManager
 
+# Import configuration and validation system
+from src.config import ConfigLoader, ConfigValidationError, StartupValidator, ValidationResult
+
 # Import error handling utilities
 from src.utils.error_handler import (
     health_monitor, degradation_manager, log_component_error, log_component_recovery,
@@ -97,185 +100,80 @@ class SecondShiftAugieBot:
         self._shutdown_event.set()
     
     def load_configuration(self) -> bool:
-        """Load configuration from environment variables.
+        """
+        Load configuration using the new configuration system.
+        
+        Requirements 4.2, 4.3, 5.4: Comprehensive configuration loading with validation.
         
         Returns:
             bool: True if configuration loaded successfully, False otherwise
         """
         try:
-            # Load environment variables from .env file
-            load_dotenv()
+            logger.info("Loading configuration using ConfigLoader...")
             
-            # Validate required environment variables
-            required_vars = ['BOT_TOKEN', 'CHANNEL_ID']
-            missing_vars = []
+            # Initialize configuration loader
+            config_loader = ConfigLoader()
             
-            for var in required_vars:
-                if not os.getenv(var):
-                    missing_vars.append(var)
+            # Load all configurations with validation
+            self.config, self.tts_config = config_loader.load_all_configs()
             
-            if missing_vars:
-                logger.error(f"Missing required environment variables: {missing_vars}")
+            # Log configuration summary
+            summary = config_loader.get_validation_summary()
+            logger.info(f"Configuration loaded successfully: {summary}")
+            
+            return True
+            
+        except ConfigValidationError as e:
+            logger.error(f"Configuration validation failed: {e}")
+            if e.errors:
+                for error in e.errors:
+                    logger.error(f"  - {error}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error loading configuration: {e}")
+            return False
+    
+    def validate_startup_requirements(self) -> bool:
+        """
+        Validate startup requirements using the new validation system.
+        
+        Requirements 4.2, 4.3, 5.4: Comprehensive startup validation including reference files
+        and VoxCPM model accessibility.
+        
+        Returns:
+            bool: True if critical requirements are met, False otherwise
+        """
+        try:
+            logger.info("Running comprehensive startup validation...")
+            
+            # Initialize startup validator
+            validator = StartupValidator(self.config, self.tts_config)
+            
+            # Run all validations
+            validation_result = validator.run_all_validations()
+            
+            # Log all validation results
+            validator.log_validation_results()
+            
+            # Check if bot can start
+            if not validation_result.can_start:
+                logger.error("Critical validation failures prevent bot startup")
                 return False
             
-            # Load bot configuration
-            try:
-                self.config = BotConfig(
-                    token=os.getenv('BOT_TOKEN'),
-                    channel_id=int(os.getenv('CHANNEL_ID')),
-                    voice_channel_id=int(os.getenv('VOICE_CHANNEL_ID')) if os.getenv('VOICE_CHANNEL_ID') else None,
-                    save_path=os.getenv('SAVE_PATH', './temp_audio'),
-                    command_prefix=os.getenv('COMMAND_PREFIX', '!')
-                )
-                logger.info("Bot configuration loaded successfully")
-            except (ValueError, TypeError) as e:
-                logger.error(f"Invalid bot configuration: {e}")
-                return False
+            # Log summary
+            summary = validation_result.summary
+            logger.info(f"Startup validation summary: {summary}")
             
-            # Load TTS configuration
-            self.tts_config = TTSConfig(
-                model_path=os.getenv('VOXCPM_MODEL_PATH', 'openbmb/VoxCPM-0.5B'),
-                prompt_wav_path=os.getenv('VOXCPM_PROMPT_WAV', 'assets/model.wav'),
-                prompt_text_path=os.getenv('VOXCPM_PROMPT_TEXT', 'assets/transcript.txt'),
-                cfg_value=float(os.getenv('VOXCPM_CFG_VALUE', '2.0')),
-                inference_timesteps=int(os.getenv('VOXCPM_INFERENCE_STEPS', '10')),
-                normalize=os.getenv('VOXCPM_NORMALIZE', 'true').lower() == 'true',
-                denoise=os.getenv('VOXCPM_DENOISE', 'true').lower() == 'true',
-                max_length=int(os.getenv('VOXCPM_MAX_LENGTH', '4096')),
-                save_path=self.config.save_path
-            )
-            logger.info("TTS configuration loaded successfully")
+            # Warn about disabled features
+            if not summary.get('voice_features_available', True):
+                logger.warning("Voice features will be disabled due to validation issues")
+                degradation_manager.disable_feature("voice_generation", "Startup validation failed")
+                degradation_manager.enable_degraded_mode("bot_responses", "text-only responses")
             
             return True
             
         except Exception as e:
-            logger.error(f"Error loading configuration: {e}")
-            return False
-    
-    def validate_startup_requirements(self) -> bool:
-        """Validate startup requirements including reference files.
-        
-        Requirement 4.3: Validate reference files exist and log errors if missing
-        
-        Returns:
-            bool: True if all requirements are met, False otherwise
-        """
-        try:
-            logger.info("Validating startup requirements...")
-            validation_errors = []
-            
-            # Check if reference audio file exists and is valid
-            if not os.path.exists(self.tts_config.prompt_wav_path):
-                error_msg = f"Reference audio file not found: {self.tts_config.prompt_wav_path}"
-                logger.error(error_msg)
-                validation_errors.append(error_msg)
-            else:
-                try:
-                    # Validate audio file format and accessibility
-                    import soundfile as sf
-                    with sf.SoundFile(self.tts_config.prompt_wav_path) as f:
-                        if f.frames == 0:
-                            error_msg = f"Reference audio file is empty: {self.tts_config.prompt_wav_path}"
-                            logger.error(error_msg)
-                            validation_errors.append(error_msg)
-                        else:
-                            logger.info(f"Reference audio validated: {f.frames} frames, {f.samplerate} Hz")
-                            
-                except Exception as audio_error:
-                    error_msg = f"Reference audio file validation failed: {audio_error}"
-                    logger.error(error_msg)
-                    validation_errors.append(error_msg)
-            
-            # Check if reference text file exists and is valid
-            if not os.path.exists(self.tts_config.prompt_text_path):
-                error_msg = f"Reference text file not found: {self.tts_config.prompt_text_path}"
-                logger.error(error_msg)
-                validation_errors.append(error_msg)
-            else:
-                try:
-                    with open(self.tts_config.prompt_text_path, 'r', encoding='utf-8') as f:
-                        content = f.read().strip()
-                        if not content:
-                            error_msg = f"Reference text file is empty: {self.tts_config.prompt_text_path}"
-                            logger.error(error_msg)
-                            validation_errors.append(error_msg)
-                        elif len(content) < 10:
-                            logger.warning(f"Reference text is very short ({len(content)} chars) - may affect voice quality")
-                        else:
-                            logger.info(f"Reference text validated: {len(content)} characters")
-                            
-                except UnicodeDecodeError as encoding_error:
-                    error_msg = f"Reference text file encoding error: {encoding_error}"
-                    logger.error(error_msg)
-                    validation_errors.append(error_msg)
-                except Exception as text_error:
-                    error_msg = f"Error reading reference text file: {text_error}"
-                    logger.error(error_msg)
-                    validation_errors.append(error_msg)
-            
-            # Ensure save directory exists and is writable
-            try:
-                os.makedirs(self.tts_config.save_path, exist_ok=True)
-                
-                # Test write permissions
-                test_file = os.path.join(self.tts_config.save_path, "test_write.tmp")
-                try:
-                    with open(test_file, 'w') as f:
-                        f.write("test")
-                    os.remove(test_file)
-                    logger.info(f"Save directory validated: {self.tts_config.save_path}")
-                except Exception as write_error:
-                    error_msg = f"Save directory not writable: {write_error}"
-                    logger.error(error_msg)
-                    validation_errors.append(error_msg)
-                    
-            except Exception as dir_error:
-                error_msg = f"Cannot create save directory: {dir_error}"
-                logger.error(error_msg)
-                validation_errors.append(error_msg)
-            
-            # Check for VoxCPM dependencies
-            try:
-                import voxcpm
-                logger.info("VoxCPM module available")
-            except ImportError:
-                error_msg = "VoxCPM module not installed - voice generation will be unavailable"
-                logger.warning(error_msg)
-                validation_errors.append(error_msg)
-            except Exception as import_error:
-                error_msg = f"VoxCPM import error: {import_error}"
-                logger.warning(error_msg)
-                validation_errors.append(error_msg)
-            
-            # Check for FFmpeg (required for Discord audio)
-            try:
-                import subprocess
-                result = subprocess.run(['ffmpeg', '-version'], 
-                                      capture_output=True, 
-                                      timeout=5,
-                                      creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-                if result.returncode == 0:
-                    logger.info("FFmpeg available for audio processing")
-                else:
-                    logger.warning("FFmpeg may not be properly installed")
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                logger.warning("FFmpeg not found - audio playback may not work")
-            except Exception as ffmpeg_error:
-                logger.warning(f"FFmpeg check failed: {ffmpeg_error}")
-            
-            # Report validation results
-            if validation_errors:
-                logger.error("Startup validation failed with the following errors:")
-                for i, error in enumerate(validation_errors, 1):
-                    logger.error(f"  {i}. {error}")
-                logger.error("VoxCPM will be disabled - bot will operate in text-only mode")
-                return False
-            else:
-                logger.info("All startup requirements validation passed")
-                return True
-            
-        except Exception as e:
-            logger.error(f"Unexpected error validating startup requirements: {e}")
+            logger.error(f"Unexpected error during startup validation: {e}")
             return False
     
     async def initialize_components(self) -> bool:
