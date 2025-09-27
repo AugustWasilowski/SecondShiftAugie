@@ -99,6 +99,12 @@ class MessageRouter:
         """
         Handle messages that mention the bot.
         
+        Implements requirements:
+        - 2.1: Play audio in voice channel when connected and response generated
+        - 2.2: Text-only response when not in voice channel
+        - 2.3: Log errors and continue with text-only on audio failure
+        - 3.3: Generate and play voice responses for @mentions when in voice channel
+        
         Args:
             message: Discord message containing bot mention
             
@@ -118,38 +124,80 @@ class MessageRouter:
             if not content:
                 content = "Hello! How can I help you?"
             
-            # Generate a simple response (in a real implementation, this would use AI)
+            # Generate a text response
             response_text = await self._generate_response(content, message.author.display_name)
             
-            # Determine if we should generate and play audio
-            should_generate_audio = self._should_generate_audio()
-            audio_response = None
+            # Check if we should generate audio (Requirement 3.3: when in voice channel AND receives @mentions)
+            is_in_voice = self.bot_manager.is_in_voice_channel()
+            tts_ready = self.tts_engine.is_ready()
             
-            if should_generate_audio and self.tts_engine.is_ready():
-                # Generate audio for the response
-                audio_response = await self.tts_engine.generate_speech(response_text)
+            self._logger.info(f"Mention handling - Voice channel: {is_in_voice}, TTS ready: {tts_ready}")
+            
+            # Requirement 2.1: WHEN bot is connected to voice channel AND generates response 
+            # THEN system SHALL play generated audio file in voice channel
+            if is_in_voice and tts_ready:
+                try:
+                    # Generate audio for the response
+                    self._logger.info(f"Generating audio for mention response: '{response_text[:50]}...'")
+                    audio_response = await self.tts_engine.generate_speech(response_text)
+                    
+                    if audio_response.success and audio_response.audio_path:
+                        # Attempt to play audio in voice channel
+                        try:
+                            audio_played = await self.audio_manager.play_in_voice_channel(
+                                self.bot_manager, 
+                                audio_response.audio_path
+                            )
+                            
+                            if audio_played:
+                                self._logger.info("Successfully played audio response for mention")
+                                return MessageResponse(
+                                    text_response=response_text,
+                                    audio_response=audio_response,
+                                    should_play_audio=True
+                                )
+                            else:
+                                # Requirement 2.3: Log error and continue with text-only response
+                                self._logger.error("Failed to play audio in voice channel - continuing with text-only")
+                                
+                        except Exception as audio_error:
+                            # Requirement 2.3: WHEN audio playback fails THEN log error and continue with text-only
+                            self._logger.error(f"Audio playback failed for mention: {audio_error}")
+                            self._logger.info("Continuing with text-only response due to audio playback failure")
+                    
+                    else:
+                        # Audio generation failed, log and continue with text
+                        self._logger.error(f"Audio generation failed: {audio_response.error_message}")
+                        self._logger.info("Continuing with text-only response due to audio generation failure")
+                        
+                except Exception as tts_error:
+                    # Requirement 2.3: Log TTS errors and continue with text-only
+                    self._logger.error(f"TTS generation failed for mention: {tts_error}")
+                    self._logger.info("Continuing with text-only response due to TTS failure")
+            
+            elif is_in_voice and not tts_ready:
+                # In voice channel but TTS not ready
+                self._logger.warning("Bot is in voice channel but TTS engine not ready - text-only response")
                 
-                if audio_response.success and self.bot_manager.is_in_voice_channel():
-                    # Play audio in voice channel
-                    await self.audio_manager.play_in_voice_channel(
-                        self.bot_manager, 
-                        audio_response.audio_path
-                    )
-                    return MessageResponse(
-                        text_response=response_text,
-                        audio_response=audio_response,
-                        should_play_audio=True
-                    )
+            elif not is_in_voice:
+                # Requirement 2.2: WHEN bot not in voice channel AND generates response 
+                # THEN system SHALL only send text response to chat
+                self._logger.info("Bot not in voice channel - sending text-only response")
             
+            # Return text-only response (either by design or due to fallback)
             return MessageResponse(
                 text_response=response_text,
-                audio_response=audio_response,
+                audio_response=None,
                 should_play_audio=False
             )
             
         except Exception as e:
-            self._logger.error(f"Error handling mention: {e}")
-            return MessageResponse("Sorry, I had trouble processing your message.", should_play_audio=False)
+            # Handle any unexpected errors in mention processing
+            self._logger.error(f"Unexpected error handling mention: {e}")
+            return MessageResponse(
+                text_response="Sorry, I had trouble processing your message.", 
+                should_play_audio=False
+            )
     
     async def _generate_response(self, content: str, user_name: str) -> str:
         """

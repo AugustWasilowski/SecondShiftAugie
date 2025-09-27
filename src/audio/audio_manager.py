@@ -4,9 +4,10 @@ Audio Manager for VoxCPM TTS Integration
 Handles audio file storage, cleanup, and tracking for the Discord bot.
 Provides functionality to save generated audio files with unique names,
 track the last generated file for replay, and implement cleanup to prevent
-disk space issues.
+disk space issues. Includes audio queuing for handling multiple simultaneous requests.
 """
 
+import asyncio
 import os
 import time
 import uuid
@@ -34,10 +35,18 @@ class AudioManager:
         self.save_path = Path(save_path)
         self.last_audio_path: Optional[str] = None
         
+        # Audio playback queue for handling multiple simultaneous requests (Requirement 2.4)
+        self._audio_queue = asyncio.Queue()
+        self._queue_processor_task: Optional[asyncio.Task] = None
+        self._is_processing = False
+        
         # Create save directory if it doesn't exist
         self.save_path.mkdir(parents=True, exist_ok=True)
         
         logger.info(f"AudioManager initialized with save path: {self.save_path}")
+        
+        # Start the audio queue processor
+        self._start_queue_processor()
     
     async def save_generated_audio(self, audio_data: bytes, text_content: str = "") -> str:
         """
@@ -177,9 +186,53 @@ class AudioManager:
                 "error": str(e)
             }
     
-    async def play_in_voice_channel(self, bot_manager: "DiscordBotManager", audio_path: str) -> bool:
+    def _start_queue_processor(self):
+        """Start the audio queue processor task."""
+        if self._queue_processor_task is None or self._queue_processor_task.done():
+            self._queue_processor_task = asyncio.create_task(self._process_audio_queue())
+            logger.info("Audio queue processor started")
+    
+    async def _process_audio_queue(self):
         """
-        Play audio file in Discord voice channel through the bot manager.
+        Process audio playback queue to handle multiple simultaneous requests.
+        
+        Implements Requirement 2.4: WHEN multiple audio requests are made simultaneously 
+        THEN system SHALL queue them appropriately
+        """
+        logger.info("Audio queue processor running")
+        
+        while True:
+            try:
+                # Wait for audio playback request
+                audio_request = await self._audio_queue.get()
+                
+                if audio_request is None:  # Shutdown signal
+                    break
+                
+                bot_manager, audio_path, result_future = audio_request
+                
+                try:
+                    # Process the audio playback request
+                    success = await self._play_audio_immediate(bot_manager, audio_path)
+                    result_future.set_result(success)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing queued audio request: {e}")
+                    result_future.set_result(False)
+                
+                finally:
+                    self._audio_queue.task_done()
+                    
+            except asyncio.CancelledError:
+                logger.info("Audio queue processor cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Unexpected error in audio queue processor: {e}")
+                await asyncio.sleep(1)  # Brief pause before continuing
+    
+    async def _play_audio_immediate(self, bot_manager: "DiscordBotManager", audio_path: str) -> bool:
+        """
+        Immediately play audio file without queuing.
         
         Args:
             bot_manager: Discord bot manager instance
@@ -197,14 +250,69 @@ class AudioManager:
                 logger.warning("Bot is not in a voice channel, cannot play audio")
                 return False
             
+            # Wait for any currently playing audio to finish
+            while bot_manager.is_playing_audio():
+                await asyncio.sleep(0.1)
+            
             success = await bot_manager.play_audio(audio_path)
             if success:
-                logger.info(f"Successfully played audio: {audio_path}")
+                logger.info(f"Successfully played queued audio: {audio_path}")
             else:
-                logger.error(f"Failed to play audio: {audio_path}")
+                logger.error(f"Failed to play queued audio: {audio_path}")
             
             return success
             
         except Exception as e:
-            logger.error(f"Error playing audio in voice channel: {e}")
+            logger.error(f"Error playing audio immediately: {e}")
             return False
+    
+    async def play_in_voice_channel(self, bot_manager: "DiscordBotManager", audio_path: str) -> bool:
+        """
+        Play audio file in Discord voice channel through the bot manager.
+        
+        Uses audio queuing to handle multiple simultaneous requests (Requirement 2.4).
+        
+        Args:
+            bot_manager: Discord bot manager instance
+            audio_path: Path to the audio file to play
+            
+        Returns:
+            bool: True if audio was played successfully, False otherwise
+        """
+        try:
+            if not os.path.exists(audio_path):
+                logger.error(f"Audio file not found: {audio_path}")
+                return False
+            
+            if not bot_manager.is_in_voice_channel():
+                logger.warning("Bot is not in a voice channel, cannot play audio")
+                return False
+            
+            # Create a future to get the result
+            result_future = asyncio.Future()
+            
+            # Add to queue for processing
+            await self._audio_queue.put((bot_manager, audio_path, result_future))
+            logger.debug(f"Added audio to queue: {audio_path}")
+            
+            # Wait for the result
+            success = await result_future
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error queuing audio for voice channel: {e}")
+            return False
+    
+    async def stop_queue_processor(self):
+        """Stop the audio queue processor."""
+        if self._queue_processor_task and not self._queue_processor_task.done():
+            # Send shutdown signal
+            await self._audio_queue.put(None)
+            
+            try:
+                await asyncio.wait_for(self._queue_processor_task, timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("Audio queue processor did not stop gracefully, cancelling")
+                self._queue_processor_task.cancel()
+                
+            logger.info("Audio queue processor stopped")

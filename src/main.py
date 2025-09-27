@@ -258,7 +258,12 @@ class SecondShiftAugieBot:
                 
                 # Send text response if available
                 if response.text_response:
-                    await message.reply(response.text_response, mention_author=True)
+                    # Add audio status indicator to text response if audio was played
+                    text_to_send = response.text_response
+                    if response.should_play_audio and response.audio_response and response.audio_response.success:
+                        text_to_send += " 🎤"  # Indicate audio was played
+                    
+                    await message.reply(text_to_send, mention_author=True)
         
         @bot.event
         async def on_command_error(ctx, error):
@@ -343,8 +348,9 @@ class SecondShiftAugieBot:
             if self.tts_engine:
                 await self.tts_engine.cleanup()
             
-            # Cleanup audio files
+            # Cleanup audio files and stop queue processor
             if self.audio_manager:
+                await self.audio_manager.stop_queue_processor()
                 await self.audio_manager.cleanup_old_files(max_age_hours=1)
             
             self._shutdown_event.set()
