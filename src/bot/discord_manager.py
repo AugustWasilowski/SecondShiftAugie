@@ -21,7 +21,7 @@ class DiscordBotManager:
             config: Bot configuration containing token and channel settings
         """
         self.config = config
-        self.bot: Optional[nextcord.Client] = None
+        self.bot: Optional[commands.Bot] = None
         self.voice_client: Optional[nextcord.VoiceClient] = None
         self._ready = False
         self._logger = logging.getLogger(__name__)
@@ -31,7 +31,11 @@ class DiscordBotManager:
         intents.message_content = True
         intents.voice_states = True
         
-        self.bot = nextcord.Client(intents=intents)
+        self.bot = commands.Bot(
+            command_prefix=config.command_prefix,
+            intents=intents,
+            help_command=None  # We'll use our custom help command
+        )
         self._setup_event_handlers()
     
     def _setup_event_handlers(self):
