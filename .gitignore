@@ -175,4 +175,8 @@ cython_debug/
 /node_modules/
 /tmp/
 
+# VoxCPM model files
+models/openbmb__VoxCPM-0.5B/
+
 .kiro/
+
