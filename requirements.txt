@@ -1,0 +1,39 @@
+# Core VoxCPM dependencies
+torch>=2.5.0
+torchaudio>=2.5.0
+transformers>=4.36.2
+einops
+addict
+wetext
+modelscope>=1.22.0
+datasets>=3,<4
+huggingface-hub
+pydantic
+tqdm
+simplejson
+sortedcontainers
+soundfile
+funasr
+spaces
+inflect
+
+# Discord bot dependencies
+nextcord
+python-dotenv
+
+# AI/ML dependencies
+openai
+elevenlabs
+
+# Utility dependencies
+numpy
+gradio
+pytube
+
+# Development dependencies
+pytest>=6.0
+pytest-cov>=2.0
+black>=21.0
+flake8>=3.8
+mypy>=0.800
+pre-commit>=2.0
