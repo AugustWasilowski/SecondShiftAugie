@@ -33,8 +33,14 @@ from src.bot.message_router import MessageRouter
 from src.bot.commands import BotCommands
 from src.audio.audio_manager import AudioManager
 
+# Import AI components
+from src.ai.ollama_engine import OllamaEngine
+from src.ai.system_prompt_manager import SystemPromptManager
+from src.bot.slash_commands import SlashCommandHandler
+
 # Import configuration and validation system
 from src.config import ConfigLoader, ConfigValidationError, StartupValidator, ValidationResult
+from src.config.ollama_config import OllamaConfig
 
 # Import error handling utilities
 from src.utils.error_handler import (
@@ -62,11 +68,15 @@ class SecondShiftAugieBot:
         """Initialize the bot application."""
         self.config: Optional[BotConfig] = None
         self.tts_config: Optional[TTSConfig] = None
+        self.ollama_config: Optional[OllamaConfig] = None
         self.tts_engine: Optional[VoxCPMEngine] = None
+        self.ollama_engine: Optional[OllamaEngine] = None
+        self.system_prompt_manager: Optional[SystemPromptManager] = None
         self.bot_manager: Optional[DiscordBotManager] = None
         self.audio_manager: Optional[AudioManager] = None
         self.message_router: Optional[MessageRouter] = None
         self.bot_commands: Optional[BotCommands] = None
+        self.slash_command_handler: Optional[SlashCommandHandler] = None
         self._shutdown_event = asyncio.Event()
         self._shutdown_requested = False
         
@@ -115,7 +125,7 @@ class SecondShiftAugieBot:
             config_loader = ConfigLoader()
             
             # Load all configurations with validation
-            self.config, self.tts_config = config_loader.load_all_configs()
+            self.config, self.tts_config, self.ollama_config = config_loader.load_all_configs()
             
             # Log configuration summary
             summary = config_loader.get_validation_summary()
@@ -147,7 +157,7 @@ class SecondShiftAugieBot:
             logger.info("Running comprehensive startup validation...")
             
             # Initialize startup validator
-            validator = StartupValidator(self.config, self.tts_config)
+            validator = StartupValidator(self.config, self.tts_config, self.ollama_config)
             
             # Run all validations
             validation_result = validator.run_all_validations()
@@ -197,6 +207,49 @@ class SecondShiftAugieBot:
                 degradation_manager.disable_feature("audio_playback", "Audio manager initialization failed")
                 return False  # Audio manager is critical
             
+            # Initialize system prompt manager
+            logger.info("Initializing system prompt manager...")
+            try:
+                self.system_prompt_manager = SystemPromptManager(self.ollama_config.system_prompt_file)
+                health_monitor.update_component_state("system_prompt_manager", ComponentState.HEALTHY)
+                log_component_recovery("system_prompt_manager", "initialization")
+            except Exception as e:
+                log_component_error("system_prompt_manager", "initialization", e, ErrorSeverity.MEDIUM)
+                logger.warning("System prompt manager initialization failed - using default prompts")
+                health_monitor.update_component_state("system_prompt_manager", ComponentState.FAILED)
+                # Continue without system prompt manager - not critical
+            
+            # Initialize Ollama AI engine with graceful degradation
+            logger.info("Initializing Ollama AI engine...")
+            try:
+                self.ollama_engine = OllamaEngine(self.ollama_config, self.system_prompt_manager)
+                
+                # Attempt to initialize Ollama (Requirement 1.5: verify connectivity)
+                async def init_ollama():
+                    return await self.ollama_engine.initialize()
+                
+                ollama_ready = await retry_with_backoff(
+                    init_ollama,
+                    max_retries=2,
+                    base_delay=2.0
+                )
+                
+                if not ollama_ready:
+                    logger.warning("Ollama AI engine failed to initialize - continuing without AI features")
+                    health_monitor.update_component_state("ollama_engine", ComponentState.FAILED)
+                    degradation_manager.disable_feature("ai_responses", "Ollama initialization failed")
+                else:
+                    logger.info("Ollama AI engine initialized successfully")
+                    health_monitor.update_component_state("ollama_engine", ComponentState.HEALTHY)
+                    log_component_recovery("ollama_engine", "initialization")
+                    
+            except Exception as e:
+                log_component_error("ollama_engine", "initialization", e, ErrorSeverity.MEDIUM)
+                logger.warning("Ollama AI engine initialization failed - continuing without AI features")
+                health_monitor.update_component_state("ollama_engine", ComponentState.FAILED)
+                degradation_manager.disable_feature("ai_responses", f"AI initialization error: {str(e)}")
+                # Continue without AI - not critical for basic bot operation
+            
             # Initialize VoxCPM TTS engine with graceful degradation
             logger.info("Initializing VoxCPM TTS engine...")
             try:
@@ -241,13 +294,14 @@ class SecondShiftAugieBot:
                 logger.error("Discord bot manager initialization failed - cannot continue")
                 return False  # Discord manager is critical
             
-            # Initialize message router
+            # Initialize message router with AI integration
             logger.info("Initializing message router...")
             try:
                 self.message_router = MessageRouter(
                     self.tts_engine,
                     self.audio_manager,
-                    self.bot_manager
+                    self.bot_manager,
+                    self.ollama_engine  # Add AI engine to message router
                 )
                 health_monitor.update_component_state("message_router", ComponentState.HEALTHY)
                 log_component_recovery("message_router", "initialization")
@@ -256,13 +310,14 @@ class SecondShiftAugieBot:
                 logger.error("Message router initialization failed - cannot continue")
                 return False  # Message router is critical
             
-            # Initialize command system
+            # Initialize command system with AI integration
             logger.info("Initializing command system...")
             try:
                 self.bot_commands = BotCommands(
                     self.bot_manager,
                     self.tts_engine,
-                    self.audio_manager
+                    self.audio_manager,
+                    self.ollama_engine  # Add AI engine to commands
                 )
                 health_monitor.update_component_state("command_system", ComponentState.HEALTHY)
                 log_component_recovery("command_system", "initialization")
@@ -271,6 +326,25 @@ class SecondShiftAugieBot:
                 logger.warning("Command system initialization failed - commands may not work properly")
                 degradation_manager.disable_feature("bot_commands", f"Command system error: {str(e)}")
                 # Continue without full command system - basic functionality may still work
+            
+            # Initialize slash command handler
+            logger.info("Initializing slash command handler...")
+            try:
+                self.slash_command_handler = SlashCommandHandler(
+                    self.bot_manager.bot,
+                    self.bot_commands
+                )
+                # Register slash commands (Requirement 3.7: integrate slash command registration)
+                self.slash_command_handler.register_commands()
+                health_monitor.update_component_state("slash_commands", ComponentState.HEALTHY)
+                log_component_recovery("slash_commands", "initialization")
+                logger.info("Slash commands registered successfully")
+            except Exception as e:
+                log_component_error("slash_commands", "initialization", e, ErrorSeverity.MEDIUM)
+                logger.warning("Slash command handler initialization failed - slash commands unavailable")
+                health_monitor.update_component_state("slash_commands", ComponentState.FAILED)
+                degradation_manager.disable_feature("slash_commands", f"Slash command error: {str(e)}")
+                # Continue without slash commands - prefix commands still work
             
             # Set up Discord bot event handlers and commands
             try:
@@ -674,6 +748,15 @@ class SecondShiftAugieBot:
             if self.bot_manager:
                 await self.bot_manager.stop()
             
+            # Cleanup AI components
+            if self.ollama_engine:
+                await self.ollama_engine.cleanup()
+                logger.info("Ollama engine cleaned up")
+            
+            if self.system_prompt_manager:
+                self.system_prompt_manager.cleanup()
+                logger.info("System prompt manager cleaned up")
+            
             # Cleanup TTS engine
             if self.tts_engine:
                 await self.tts_engine.cleanup()
@@ -773,8 +856,47 @@ class SecondShiftAugieBot:
                 await asyncio.sleep(60)  # Wait before retrying
     
     async def _check_component_health(self):
-        """Check the health of all components."""
+        """Check the health of all components including AI systems.
+        
+        Requirement 2.4, 2.5: Add AI component health monitoring to periodic health checks
+        """
         try:
+            # Check Ollama AI engine (Requirement 2.4: health monitoring)
+            if self.ollama_engine:
+                try:
+                    ollama_healthy = await self.ollama_engine.health_check()
+                    if ollama_healthy:
+                        health_monitor.update_component_state("ollama_engine", ComponentState.HEALTHY)
+                        # Re-enable AI features if they were disabled
+                        if not degradation_manager.is_feature_available("ai_responses"):
+                            degradation_manager.enable_feature("ai_responses")
+                            logger.info("AI responses re-enabled after successful health check")
+                    else:
+                        health_monitor.update_component_state("ollama_engine", ComponentState.FAILED)
+                        # Disable AI features if health check fails
+                        if degradation_manager.is_feature_available("ai_responses"):
+                            degradation_manager.disable_feature("ai_responses", "Ollama health check failed")
+                            logger.warning("AI responses disabled due to health check failure")
+                except Exception as e:
+                    logger.warning(f"Ollama health check failed: {e}")
+                    health_monitor.update_component_state("ollama_engine", ComponentState.FAILED)
+                    if degradation_manager.is_feature_available("ai_responses"):
+                        degradation_manager.disable_feature("ai_responses", f"Ollama health check error: {str(e)}")
+            
+            # Check system prompt manager
+            if self.system_prompt_manager:
+                try:
+                    # Simple check - verify current prompt is available
+                    current_prompt = self.system_prompt_manager.get_current_prompt()
+                    if current_prompt and len(current_prompt.strip()) > 0:
+                        health_monitor.update_component_state("system_prompt_manager", ComponentState.HEALTHY)
+                    else:
+                        health_monitor.update_component_state("system_prompt_manager", ComponentState.DEGRADED)
+                        logger.warning("System prompt manager has empty prompt")
+                except Exception as e:
+                    logger.warning(f"System prompt manager health check failed: {e}")
+                    health_monitor.update_component_state("system_prompt_manager", ComponentState.FAILED)
+            
             # Check TTS engine
             if self.tts_engine:
                 if self.tts_engine.is_ready():

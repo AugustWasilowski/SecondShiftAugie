@@ -21,6 +21,7 @@ from enum import Enum
 
 from src.tts.config import TTSConfig
 from src.bot.config import BotConfig
+from src.config.ollama_config import OllamaConfig
 
 
 logger = logging.getLogger(__name__)
@@ -90,16 +91,18 @@ class StartupValidator:
     including file system checks, dependency validation, and configuration verification.
     """
     
-    def __init__(self, bot_config: BotConfig, tts_config: TTSConfig):
+    def __init__(self, bot_config: BotConfig, tts_config: TTSConfig, ollama_config: OllamaConfig):
         """
         Initialize the startup validator.
         
         Args:
             bot_config: Bot configuration to validate
             tts_config: TTS configuration to validate
+            ollama_config: Ollama AI configuration to validate
         """
         self.bot_config = bot_config
         self.tts_config = tts_config
+        self.ollama_config = ollama_config
         self.result = ValidationResult(True, True, [], {})
     
     def validate_reference_files(self) -> None:
@@ -577,6 +580,168 @@ class StartupValidator:
                 "Text and voice channels are the same - this may cause confusion"
             )
     
+    def validate_ollama_configuration(self) -> None:
+        """
+        Validate Ollama AI configuration and connectivity.
+        
+        Requirement 1.5: Verify Ollama connectivity and model availability during startup.
+        """
+        logger.info("Validating Ollama configuration...")
+        
+        # Validate configuration values
+        try:
+            # Check base URL format
+            if not self.ollama_config.base_url.startswith(('http://', 'https://')):
+                self.result.add_issue(
+                    ValidationSeverity.ERROR,
+                    "ollama_config",
+                    f"Invalid Ollama base URL format: {self.ollama_config.base_url}",
+                    "URL should start with http:// or https://"
+                )
+            
+            # Check model name
+            if not self.ollama_config.model_name.strip():
+                self.result.add_issue(
+                    ValidationSeverity.ERROR,
+                    "ollama_config",
+                    "Ollama model name cannot be empty"
+                )
+            
+            # Check system prompt file
+            prompt_file_path = Path(self.ollama_config.system_prompt_file)
+            if not prompt_file_path.exists():
+                self.result.add_issue(
+                    ValidationSeverity.WARNING,
+                    "ollama_config",
+                    f"System prompt file not found: {prompt_file_path}",
+                    "File will be created with default prompt if needed"
+                )
+            else:
+                try:
+                    import json
+                    with open(prompt_file_path, 'r', encoding='utf-8') as f:
+                        prompt_data = json.load(f)
+                    
+                    if 'system_prompt' not in prompt_data:
+                        self.result.add_issue(
+                            ValidationSeverity.ERROR,
+                            "ollama_config",
+                            f"System prompt file missing 'system_prompt' field: {prompt_file_path}"
+                        )
+                    elif not prompt_data['system_prompt'].strip():
+                        self.result.add_issue(
+                            ValidationSeverity.WARNING,
+                            "ollama_config",
+                            f"System prompt is empty in file: {prompt_file_path}"
+                        )
+                    else:
+                        self.result.add_issue(
+                            ValidationSeverity.INFO,
+                            "ollama_config",
+                            f"System prompt file validated: {len(prompt_data['system_prompt'])} characters"
+                        )
+                        
+                except json.JSONDecodeError as e:
+                    self.result.add_issue(
+                        ValidationSeverity.ERROR,
+                        "ollama_config",
+                        f"Invalid JSON in system prompt file: {e}"
+                    )
+                except Exception as e:
+                    self.result.add_issue(
+                        ValidationSeverity.WARNING,
+                        "ollama_config",
+                        f"Error reading system prompt file: {e}"
+                    )
+            
+            # Basic connectivity check (non-blocking)
+            try:
+                import asyncio
+                import aiohttp
+                
+                async def check_ollama_connectivity():
+                    try:
+                        timeout = aiohttp.ClientTimeout(total=5.0)
+                        async with aiohttp.ClientSession(timeout=timeout) as session:
+                            async with session.get(f"{self.ollama_config.base_url}/api/tags") as response:
+                                if response.status == 200:
+                                    return True, "Connected successfully"
+                                else:
+                                    return False, f"HTTP {response.status}"
+                    except aiohttp.ClientConnectorError:
+                        return False, "Connection refused - Ollama may not be running"
+                    except asyncio.TimeoutError:
+                        return False, "Connection timeout"
+                    except Exception as e:
+                        return False, str(e)
+                
+                # Run connectivity check with timeout
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If we're already in an async context, skip the connectivity check
+                        self.result.add_issue(
+                            ValidationSeverity.INFO,
+                            "ollama_connectivity",
+                            "Ollama connectivity check skipped (async context)",
+                            "Connectivity will be checked during engine initialization"
+                        )
+                    else:
+                        connected, message = loop.run_until_complete(
+                            asyncio.wait_for(check_ollama_connectivity(), timeout=10.0)
+                        )
+                        
+                        if connected:
+                            self.result.add_issue(
+                                ValidationSeverity.INFO,
+                                "ollama_connectivity",
+                                f"Ollama instance accessible: {message}"
+                            )
+                        else:
+                            self.result.add_issue(
+                                ValidationSeverity.WARNING,
+                                "ollama_connectivity",
+                                f"Ollama instance not accessible: {message}",
+                                "Ensure Ollama is running and accessible at the configured URL"
+                            )
+                            
+                except RuntimeError:
+                    # Already in async context
+                    self.result.add_issue(
+                        ValidationSeverity.INFO,
+                        "ollama_connectivity",
+                        "Ollama connectivity check skipped (async context)",
+                        "Connectivity will be checked during engine initialization"
+                    )
+                except asyncio.TimeoutError:
+                    self.result.add_issue(
+                        ValidationSeverity.WARNING,
+                        "ollama_connectivity",
+                        "Ollama connectivity check timed out",
+                        "Ollama may be slow to respond or not running"
+                    )
+                except Exception as e:
+                    self.result.add_issue(
+                        ValidationSeverity.WARNING,
+                        "ollama_connectivity",
+                        f"Error checking Ollama connectivity: {e}"
+                    )
+                    
+            except ImportError:
+                self.result.add_issue(
+                    ValidationSeverity.WARNING,
+                    "ollama_connectivity",
+                    "aiohttp not available - cannot check Ollama connectivity",
+                    "Install aiohttp for connectivity validation"
+                )
+                
+        except Exception as e:
+            self.result.add_issue(
+                ValidationSeverity.ERROR,
+                "ollama_config",
+                f"Error validating Ollama configuration: {e}"
+            )
+    
     def run_all_validations(self) -> ValidationResult:
         """
         Run all startup validations and return comprehensive results.
@@ -590,6 +755,7 @@ class StartupValidator:
         self.validate_reference_files()
         self.validate_save_directory()
         self.validate_voxcpm_accessibility()
+        self.validate_ollama_configuration()
         self.validate_system_dependencies()
         self.validate_discord_configuration()
         
@@ -603,6 +769,11 @@ class StartupValidator:
             'can_start_bot': self.result.can_start,
             'voice_features_available': not any(
                 issue.component.startswith(('voxcpm', 'reference_')) and 
+                issue.severity in (ValidationSeverity.ERROR, ValidationSeverity.CRITICAL)
+                for issue in self.result.issues
+            ),
+            'ai_features_available': not any(
+                issue.component.startswith('ollama_') and 
                 issue.severity in (ValidationSeverity.ERROR, ValidationSeverity.CRITICAL)
                 for issue in self.result.issues
             )

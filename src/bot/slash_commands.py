@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class SlashCommandHandler:
     """Handler for Discord slash commands with delegation to existing BotCommands."""
     
-    def __init__(self, bot: nextcord.Bot, bot_commands: "BotCommands"):
+    def __init__(self, bot: commands.Bot, bot_commands: "BotCommands"):
         """Initialize slash command handler.
         
         Args:
