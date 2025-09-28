@@ -284,11 +284,15 @@ class SlashCommandHandler:
         try:
             await interaction.response.defer()
             
+            # Check AI availability for dynamic help content
+            ai_available = (self.bot_commands.ollama_engine and 
+                          self.bot_commands.ollama_engine.is_ready())
+            
             # Create updated help content for slash commands
             embed = nextcord.Embed(
                 title="🤖 SecondShiftAugie Bot Commands",
-                description="Voice-enabled Discord bot with AI conversation capabilities",
-                color=0x00ff00
+                description="AI-powered Discord bot with intelligent conversations and voice responses",
+                color=0x00ff00 if ai_available else 0xff9900
             )
             
             # Add slash command descriptions
@@ -302,13 +306,25 @@ class SlashCommandHandler:
                 inline=False
             )
             
+            # Dynamic chat features based on AI availability
+            if ai_available:
+                chat_features = (
+                    "• Mention me (@SecondShiftAugie) for intelligent AI conversations\n"
+                    "• I use Ollama with Qwen2.5 model for smart responses\n"
+                    "• Responses are converted to speech using VoxCPM TTS\n"
+                    "• Voice responses play automatically when I'm in a voice channel"
+                )
+            else:
+                chat_features = (
+                    "• Mention me (@SecondShiftAugie) for voice responses\n"
+                    "• AI features currently unavailable (using simple responses)\n"
+                    "• I'll generate speech using VoxCPM TTS\n"
+                    "• Voice responses play automatically when I'm in a voice channel"
+                )
+            
             embed.add_field(
                 name="💬 Chat Features",
-                value=(
-                    "• Mention me (@SecondShiftAugie) for AI-powered responses\n"
-                    "• I'll generate intelligent responses using Ollama AI\n"
-                    "• Voice responses play automatically when I'm in a voice channel"
-                ),
+                value=chat_features,
                 inline=False
             )
             
@@ -321,23 +337,37 @@ class SlashCommandHandler:
                 inline=False
             )
             
-            # Add current status information
+            # Add current status information including AI
             voice_status = "🟢 Connected" if self.bot_commands.bot_manager.is_in_voice_channel() else "🔴 Not connected"
             tts_status = "🟢 Ready" if self.bot_commands.tts_engine and self.bot_commands.tts_engine.is_ready() else "🔴 Not ready"
             
+            if self.bot_commands.ollama_engine:
+                ai_status = "🟢 Ready" if ai_available else "🔴 Not ready"
+                status_text = (
+                    f"Voice Channel: {voice_status}\n"
+                    f"TTS Engine: {tts_status}\n"
+                    f"AI Engine: {ai_status}"
+                )
+            else:
+                status_text = (
+                    f"Voice Channel: {voice_status}\n"
+                    f"TTS Engine: {tts_status}\n"
+                    f"AI Engine: ❌ Not configured"
+                )
+            
             embed.add_field(
                 name="📊 Current Status",
-                value=(
-                    f"Voice Channel: {voice_status}\n"
-                    f"TTS Engine: {tts_status}"
-                ),
+                value=status_text,
                 inline=False
             )
             
-            # Add footer with additional info
-            embed.set_footer(
-                text="💡 Tip: Join a voice channel and mention me to hear AI-powered voice responses!"
-            )
+            # Dynamic footer based on AI availability
+            if ai_available:
+                footer_text = "💡 Tip: Join a voice channel and mention me for intelligent AI conversations!"
+            else:
+                footer_text = "💡 Tip: Join a voice channel and mention me to hear voice responses!"
+            
+            embed.set_footer(text=footer_text)
             
             await interaction.followup.send(embed=embed)
             
@@ -345,15 +375,29 @@ class SlashCommandHandler:
             logger.error(f"Error in /help slash command: {e}")
             try:
                 # Fallback to simple text message if embed fails
-                help_text = (
-                    "**SecondShiftAugie Bot Commands:**\n"
-                    "🎤 `/join` - Join your voice channel\n"
-                    "🔊 `/play` - Replay last voice response\n"
-                    "👋 `/leave` - Leave voice channel\n"
-                    "💬 Mention me for AI-powered responses!\n"
-                    "ℹ️ `/help` - Show this message\n"
-                    "📊 `/health` - Check bot status"
-                )
+                ai_available = (self.bot_commands.ollama_engine and 
+                              self.bot_commands.ollama_engine.is_ready())
+                
+                if ai_available:
+                    help_text = (
+                        "**SecondShiftAugie Bot Commands:**\n"
+                        "🎤 `/join` - Join your voice channel\n"
+                        "🔊 `/play` - Replay last voice response\n"
+                        "👋 `/leave` - Leave voice channel\n"
+                        "🤖 Mention me for intelligent AI conversations!\n"
+                        "ℹ️ `/help` - Show this message\n"
+                        "📊 `/health` - Check bot status"
+                    )
+                else:
+                    help_text = (
+                        "**SecondShiftAugie Bot Commands:**\n"
+                        "🎤 `/join` - Join your voice channel\n"
+                        "🔊 `/play` - Replay last voice response\n"
+                        "👋 `/leave` - Leave voice channel\n"
+                        "💬 Mention me for voice responses! (AI currently unavailable)\n"
+                        "ℹ️ `/help` - Show this message\n"
+                        "📊 `/health` - Check bot status"
+                    )
                 
                 if not interaction.response.is_done():
                     await interaction.response.send_message(help_text)

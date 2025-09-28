@@ -6,7 +6,7 @@ including voice channel management and audio playback commands.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import nextcord
 from nextcord.ext import commands
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from .discord_manager import DiscordBotManager
     from ..tts.voxcpm_engine import VoxCPMEngine
     from ..audio.audio_manager import AudioManager
+    from ..ai.ollama_engine import OllamaEngine
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,8 @@ class BotCommands:
         self, 
         bot_manager: "DiscordBotManager", 
         tts_engine: "VoxCPMEngine", 
-        audio_manager: "AudioManager"
+        audio_manager: "AudioManager",
+        ollama_engine: Optional["OllamaEngine"] = None
     ):
         """Initialize command system.
         
@@ -34,10 +36,12 @@ class BotCommands:
             bot_manager: Discord bot manager instance
             tts_engine: VoxCPM TTS engine instance
             audio_manager: Audio file manager instance
+            ollama_engine: Optional Ollama AI engine for intelligent responses
         """
         self.bot_manager = bot_manager
         self.tts_engine = tts_engine
         self.audio_manager = audio_manager
+        self.ollama_engine = ollama_engine
         
         logger.info("BotCommands initialized")
     
@@ -134,15 +138,20 @@ class BotCommands:
     async def help_command(self, ctx: commands.Context) -> None:
         """Handle !help command with updated functionality description.
         
+        Requirement 3.5: Update help command to reflect new AI capabilities
+        
         Args:
             ctx: Discord command context
         """
         try:
+            # Check AI availability for dynamic help content
+            ai_available = self.ollama_engine and self.ollama_engine.is_ready()
+            
             # Create embed with bot functionality
             embed = nextcord.Embed(
                 title="🤖 SecondShiftAugie Bot Commands",
-                description="Voice-enabled Discord bot with VoxCPM text-to-speech integration",
-                color=0x00ff00
+                description="AI-powered Discord bot with intelligent conversations and voice responses",
+                color=0x00ff00 if ai_available else 0xff9900
             )
             
             # Add command descriptions
@@ -156,13 +165,25 @@ class BotCommands:
                 inline=False
             )
             
-            embed.add_field(
-                name="💬 Chat Features",
-                value=(
+            # Dynamic chat features based on AI availability
+            if ai_available:
+                chat_features = (
+                    "• Mention me (@SecondShiftAugie) for intelligent AI conversations\n"
+                    "• I use Ollama with Qwen2.5 model for smart responses\n"
+                    "• Responses are converted to speech using VoxCPM TTS\n"
+                    "• Voice responses play automatically when I'm in a voice channel"
+                )
+            else:
+                chat_features = (
                     "• Mention me (@SecondShiftAugie) for voice responses\n"
+                    "• AI features currently unavailable (using simple responses)\n"
                     "• I'll generate speech using VoxCPM TTS\n"
                     "• Voice responses play automatically when I'm in a voice channel"
-                ),
+                )
+            
+            embed.add_field(
+                name="💬 Chat Features",
+                value=chat_features,
                 inline=False
             )
             
@@ -170,52 +191,84 @@ class BotCommands:
                 name="ℹ️ Information Commands",
                 value=(
                     "`!help` - Show this help message\n"
-                    "`!status` - Check bot and TTS engine status"
+                    "`!status` - Check bot, TTS, and AI engine status"
                 ),
                 inline=False
             )
             
-            # Add status information
+            # Add status information including AI
             voice_status = "🟢 Connected" if self.bot_manager.is_in_voice_channel() else "🔴 Not connected"
             tts_status = "🟢 Ready" if self.tts_engine.is_ready() else "🔴 Not ready"
             
+            if self.ollama_engine:
+                ai_status = "🟢 Ready" if ai_available else "🔴 Not ready"
+                status_text = (
+                    f"Voice Channel: {voice_status}\n"
+                    f"TTS Engine: {tts_status}\n"
+                    f"AI Engine: {ai_status}"
+                )
+            else:
+                status_text = (
+                    f"Voice Channel: {voice_status}\n"
+                    f"TTS Engine: {tts_status}\n"
+                    f"AI Engine: ❌ Not configured"
+                )
+            
             embed.add_field(
                 name="📊 Current Status",
-                value=(
-                    f"Voice Channel: {voice_status}\n"
-                    f"TTS Engine: {tts_status}"
-                ),
+                value=status_text,
                 inline=False
             )
             
-            # Add footer with additional info
-            embed.set_footer(
-                text="💡 Tip: Join a voice channel and mention me to hear voice responses!"
-            )
+            # Dynamic footer based on AI availability
+            if ai_available:
+                footer_text = "💡 Tip: Join a voice channel and mention me for intelligent AI conversations!"
+            else:
+                footer_text = "💡 Tip: Join a voice channel and mention me to hear voice responses!"
+            
+            embed.set_footer(text=footer_text)
             
             await ctx.send(embed=embed)
             
         except Exception as e:
             logger.error(f"Error in help command: {e}")
             # Fallback to simple text message if embed fails
-            help_text = (
-                "**SecondShiftAugie Bot Commands:**\n"
-                "🎤 `!join` - Join your voice channel\n"
-                "🔊 `!play` - Replay last voice response\n"
-                "💬 Mention me for voice responses!\n"
-                "ℹ️ `!help` - Show this message\n"
-                "📊 `!status` - Check bot status"
-            )
+            ai_available = self.ollama_engine and self.ollama_engine.is_ready()
+            
+            if ai_available:
+                help_text = (
+                    "**SecondShiftAugie Bot Commands:**\n"
+                    "🎤 `!join` - Join your voice channel\n"
+                    "🔊 `!play` - Replay last voice response\n"
+                    "🤖 Mention me for intelligent AI conversations!\n"
+                    "ℹ️ `!help` - Show this message\n"
+                    "📊 `!status` - Check bot, TTS, and AI status"
+                )
+            else:
+                help_text = (
+                    "**SecondShiftAugie Bot Commands:**\n"
+                    "🎤 `!join` - Join your voice channel\n"
+                    "🔊 `!play` - Replay last voice response\n"
+                    "💬 Mention me for voice responses! (AI currently unavailable)\n"
+                    "ℹ️ `!help` - Show this message\n"
+                    "📊 `!status` - Check bot status"
+                )
+            
             await ctx.send(help_text)
     
     async def status_command(self, ctx: commands.Context) -> None:
         """Handle !status command to show bot and engine status.
         
+        Requirements:
+        - 3.5: Show bot status including AI capabilities
+        - 6.4: Include AI status in health reporting
+        - 6.5: Indicate when AI features are unavailable
+        
         Args:
             ctx: Discord command context
         """
         try:
-            # Gather status information
+            # Gather basic status information
             bot_ready = self.bot_manager.is_ready()
             in_voice = self.bot_manager.is_in_voice_channel()
             tts_ready = self.tts_engine.is_ready()
@@ -226,19 +279,89 @@ class BotCommands:
             # Get audio storage info
             storage_info = self.audio_manager.get_storage_info()
             
+            # Get AI status information
+            ai_ready = False
+            ai_health_ok = False
+            ai_test_result = None
+            ai_error = None
+            
+            if self.ollama_engine:
+                ai_ready = self.ollama_engine.is_ready()
+                
+                if ai_ready:
+                    # Perform AI health check
+                    try:
+                        ai_health_ok = await self.ollama_engine.health_check()
+                        logger.debug(f"AI health check result: {ai_health_ok}")
+                    except Exception as health_error:
+                        logger.warning(f"AI health check failed: {health_error}")
+                        ai_error = f"Health check failed: {str(health_error)[:50]}"
+                    
+                    # Test AI response generation if healthy
+                    if ai_health_ok:
+                        try:
+                            logger.info("Testing AI response generation for status command")
+                            test_response = await self.ollama_engine.generate_response(
+                                "Hello, this is a test message for status checking.", 
+                                "Respond briefly that the test was successful."
+                            )
+                            
+                            if test_response.success:
+                                ai_test_result = "✅ Working"
+                                logger.info("AI response generation test successful")
+                            else:
+                                ai_test_result = f"⚠️ Failed"
+                                ai_error = test_response.error_message or "Unknown error"
+                                logger.warning(f"AI response test failed: {ai_error}")
+                                
+                        except Exception as test_error:
+                            ai_test_result = "❌ Error"
+                            ai_error = str(test_error)[:50]
+                            logger.error(f"AI response test error: {test_error}")
+                    else:
+                        ai_test_result = "❌ Health check failed"
+                else:
+                    ai_test_result = "❌ Engine not ready"
+            
+            # Determine overall status color
+            all_systems_ok = bot_ready and tts_ready and (not self.ollama_engine or ai_health_ok)
+            embed_color = 0x00ff00 if all_systems_ok else 0xff9900
+            
             # Create status embed
             embed = nextcord.Embed(
-                title="📊 Bot Status",
-                color=0x00ff00 if (bot_ready and tts_ready) else 0xff9900
+                title="📊 Bot Status Report",
+                color=embed_color
             )
             
-            # Bot status
+            # Core system status
             bot_status = "🟢 Online" if bot_ready else "🔴 Offline"
             embed.add_field(name="Bot Status", value=bot_status, inline=True)
             
-            # TTS Engine status
             tts_status = "🟢 Ready" if tts_ready else "🔴 Not Ready"
             embed.add_field(name="TTS Engine", value=tts_status, inline=True)
+            
+            # AI Engine status with detailed information
+            if self.ollama_engine:
+                if ai_ready and ai_health_ok:
+                    ai_status = "🟢 Ready & Healthy"
+                elif ai_ready:
+                    ai_status = "🟡 Ready (Health Issues)"
+                else:
+                    ai_status = "🔴 Not Ready"
+                
+                embed.add_field(name="AI Engine", value=ai_status, inline=True)
+                
+                # AI response test results
+                if ai_test_result:
+                    embed.add_field(name="AI Response Test", value=ai_test_result, inline=True)
+                
+                # Show AI error if any
+                if ai_error:
+                    error_text = ai_error if len(ai_error) <= 50 else ai_error[:47] + "..."
+                    embed.add_field(name="AI Error", value=f"⚠️ {error_text}", inline=True)
+            else:
+                embed.add_field(name="AI Engine", value="❌ Not Configured", inline=True)
+                embed.add_field(name="AI Features", value="❌ Unavailable", inline=True)
             
             # Voice channel status
             if in_voice and voice_info:
@@ -255,6 +378,46 @@ class BotCommands:
             )
             embed.add_field(name="Audio Storage", value=storage_text, inline=True)
             
+            # Feature availability summary
+            features = []
+            if tts_ready:
+                features.append("✅ Text-to-Speech")
+            else:
+                features.append("❌ Text-to-Speech")
+            
+            if in_voice:
+                features.append("✅ Voice Playback")
+            else:
+                features.append("❌ Voice Playback")
+            
+            if self.ollama_engine and ai_ready and ai_health_ok:
+                features.append("✅ AI Conversations")
+            elif self.ollama_engine:
+                features.append("⚠️ AI Conversations")
+            else:
+                features.append("❌ AI Conversations")
+            
+            embed.add_field(
+                name="Available Features",
+                value="\n".join(features),
+                inline=False
+            )
+            
+            # Add helpful footer based on status
+            if not all_systems_ok:
+                if not ai_ready and self.ollama_engine:
+                    footer_text = "💡 AI features degraded - using simple responses. Check Ollama service."
+                elif not tts_ready:
+                    footer_text = "💡 TTS unavailable - text responses only."
+                elif not in_voice:
+                    footer_text = "💡 Use !join to enable voice responses."
+                else:
+                    footer_text = "💡 Some features may be limited."
+            else:
+                footer_text = "✅ All systems operational!"
+            
+            embed.set_footer(text=footer_text)
+            
             # Add timestamp
             embed.timestamp = nextcord.utils.utcnow()
             
@@ -262,7 +425,24 @@ class BotCommands:
             
         except Exception as e:
             logger.error(f"Error in status command: {e}")
-            await ctx.send("❌ Error retrieving status information.")
+            # Graceful fallback when embed creation fails
+            try:
+                # Simple text status as fallback
+                ai_status = "Not configured"
+                if self.ollama_engine:
+                    ai_status = "Ready" if self.ollama_engine.is_ready() else "Not ready"
+                
+                fallback_text = (
+                    f"**Bot Status:**\n"
+                    f"🤖 Bot: {'Online' if self.bot_manager.is_ready() else 'Offline'}\n"
+                    f"🎤 TTS: {'Ready' if self.tts_engine.is_ready() else 'Not ready'}\n"
+                    f"🧠 AI: {ai_status}\n"
+                    f"🔊 Voice: {'Connected' if self.bot_manager.is_in_voice_channel() else 'Not connected'}"
+                )
+                await ctx.send(fallback_text)
+            except Exception as fallback_error:
+                logger.error(f"Fallback status also failed: {fallback_error}")
+                await ctx.send("❌ Error retrieving status information.")
     
     async def leave_command(self, ctx: commands.Context) -> None:
         """Handle !leave command to disconnect from voice channel.
