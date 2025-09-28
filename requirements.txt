@@ -30,6 +30,8 @@ ollama
 numpy
 gradio
 pytube
+watchdog
+jsonschema
 
 # Development dependencies
 pytest>=6.0
