@@ -203,8 +203,11 @@ class SecondShiftAugieBot:
                 self.tts_engine = VoxCPMEngine(self.tts_config)
                 
                 # Attempt to initialize VoxCPM (Requirement 4.1: graceful fallback)
+                async def init_tts():
+                    return await self.tts_engine.initialize()
+                
                 tts_ready = await retry_with_backoff(
-                    lambda: self.tts_engine.initialize(),
+                    init_tts,
                     max_retries=2,
                     base_delay=2.0
                 )
@@ -338,11 +341,7 @@ class SecondShiftAugieBot:
                         except Exception as perm_error:
                             logger.warning(f"Could not check channel permissions: {perm_error}")
                         
-                        startup_msg = (
-                            "🤖 **SecondShiftAugie** reporting for duty!\n"
-                            f"🎤 VoxCPM TTS: {'✅ Ready' if self.tts_engine.is_ready() else '❌ Disabled'}\n"
-                            "💬 Mention me for responses, use `!help` for commands!"
-                        )
+                        startup_msg = "Second Shift Augie reporting for duty."
                         
                         await channel.send(startup_msg)
                         logger.info(f"Startup message sent to channel: {channel.name}")
@@ -696,11 +695,12 @@ class SecondShiftAugieBot:
             
             # Start periodic health monitoring
             health_task = asyncio.create_task(self._periodic_health_check())
+            shutdown_task = asyncio.create_task(self._shutdown_event.wait())
             
             try:
                 # Wait for shutdown signal or health task completion
                 done, pending = await asyncio.wait(
-                    [self._shutdown_event.wait(), health_task],
+                    [shutdown_task, health_task],
                     return_when=asyncio.FIRST_COMPLETED
                 )
                 
