@@ -461,7 +461,7 @@ class SecondShiftAugieBot:
                 try:
                     activity = nextcord.Activity(
                         type=nextcord.ActivityType.listening,
-                        name="voice commands | !help"
+                        name="voice commands | /help"
                     )
                     await bot.change_presence(
                         status=nextcord.Status.online,
@@ -529,11 +529,9 @@ class SecondShiftAugieBot:
             Requirements 4.2: Proper error logging for debugging.
             """
             try:
-                # Process commands first
-                await bot.process_commands(message)
-                
-                # Route non-command messages through message router
-                if not message.content.startswith(self.config.command_prefix):
+                # Route all non-bot messages through message router (no prefix commands)
+                # All commands are now handled via slash commands
+                if message.author != bot.user:
                     try:
                         response = await self.message_router.route_message(message)
                         
@@ -585,89 +583,12 @@ class SecondShiftAugieBot:
                 logger.error(f"Unexpected error in on_message handler: {message_error}")
                 # Don't try to send a message here as it might cause recursion
         
-        @bot.event
-        async def on_command_error(ctx, error):
-            """Handle command errors with comprehensive logging and user feedback.
-            
-            Requirements 4.2: Proper error logging for debugging.
-            """
-            try:
-                # Log all command errors for debugging
-                logger.error(f"Command error in '{ctx.command}' by {ctx.author}: {error}")
-                
-                if isinstance(error, commands.CommandNotFound):
-                    await ctx.send(f"❌ Unknown command. Use `{self.config.command_prefix}help` for available commands.")
-                    
-                elif isinstance(error, commands.MissingRequiredArgument):
-                    await ctx.send(f"❌ Missing required argument for `{ctx.command}`. Use `{self.config.command_prefix}help` for usage.")
-                    
-                elif isinstance(error, commands.BadArgument):
-                    await ctx.send(f"❌ Invalid argument for `{ctx.command}`. Use `{self.config.command_prefix}help` for usage.")
-                    
-                elif isinstance(error, commands.CommandOnCooldown):
-                    await ctx.send(f"❌ Command is on cooldown. Try again in {error.retry_after:.1f} seconds.")
-                    
-                elif isinstance(error, commands.MissingPermissions):
-                    await ctx.send("❌ You don't have permission to use this command.")
-                    
-                elif isinstance(error, commands.BotMissingPermissions):
-                    missing_perms = ", ".join(error.missing_permissions)
-                    await ctx.send(f"❌ I'm missing required permissions: {missing_perms}")
-                    logger.error(f"Bot missing permissions: {missing_perms}")
-                    
-                elif isinstance(error, commands.NoPrivateMessage):
-                    await ctx.send("❌ This command cannot be used in private messages.")
-                    
-                elif isinstance(error, commands.DisabledCommand):
-                    await ctx.send("❌ This command is currently disabled.")
-                    
-                elif isinstance(error, commands.CommandInvokeError):
-                    # Log the original error for debugging
-                    logger.error(f"Command invoke error: {error.original}")
-                    await ctx.send("❌ An internal error occurred while processing the command.")
-                    
-                else:
-                    # Unknown error type
-                    logger.error(f"Unhandled command error type {type(error).__name__}: {error}")
-                    await ctx.send("❌ An unexpected error occurred while processing the command.")
-                    
-            except Exception as handler_error:
-                logger.error(f"Error in command error handler: {handler_error}")
-                # Try to send a basic error message
-                try:
-                    await ctx.send("❌ A critical error occurred.")
-                except:
-                    pass  # If we can't even send a message, just log it
+        # Command error handler removed - bot now uses slash commands only
+        # Slash command errors are handled within the SlashCommandHandler class
         
-        # Register commands
-        @bot.command(name='join')
-        async def join_cmd(ctx):
-            """Join user's voice channel."""
-            await self.bot_commands.join_command(ctx)
-        
-        @bot.command(name='play')
-        async def play_cmd(ctx):
-            """Replay last generated audio."""
-            await self.bot_commands.play_command(ctx)
-        
-        @bot.command(name='leave')
-        async def leave_cmd(ctx):
-            """Leave current voice channel."""
-            await self.bot_commands.leave_command(ctx)
-        
-        @bot.command(name='help')
-        async def help_cmd(ctx):
-            """Show help message."""
-            await self.bot_commands.help_command(ctx)
-        
-        @bot.command(name='status')
-        async def status_cmd(ctx):
-            """Show bot status."""
-            await self.bot_commands.status_command(ctx)
-        
-        @bot.command(name='health')
-        async def health_cmd(ctx):
-            """Show detailed system health information."""
+        # Legacy prefix commands have been removed - bot now uses slash commands only
+        # All command functionality is available through slash commands:
+        # /join, /play, /leave, /help, /health
             try:
                 # Get system health summary
                 health_summary = health_monitor.get_system_health_summary()
@@ -741,7 +662,7 @@ class SecondShiftAugieBot:
                 return False
             
             logger.info("Configuration loaded successfully")
-            logger.info(f"Bot will use command prefix: {self.config.command_prefix}")
+            logger.info("Bot will use slash commands only (no prefix commands)")
             logger.info(f"Target channel ID: {self.config.channel_id}")
             
             # Validate startup requirements (non-blocking for graceful degradation)

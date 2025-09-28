@@ -35,7 +35,7 @@ This guide explains how to set up and use the SecondShiftAugie Discord bot with 
 
 - `VOICE_CHANNEL_ID`: Default voice channel ID for the bot to join
 - `SAVE_PATH`: Directory for temporary audio files (default: `./temp_audio`)
-- `COMMAND_PREFIX`: Bot command prefix (default: `!`)
+- Bot now uses slash commands only (no prefix commands)
 
 ### VoxCPM Configuration
 
@@ -52,18 +52,20 @@ This guide explains how to set up and use the SecondShiftAugie Discord bot with 
 
 ### Commands
 
-- `!join` - Join your current voice channel
-- `!play` - Replay the last generated voice response
-- `!leave` - Leave the current voice channel
-- `!help` - Show help message with all commands
-- `!status` - Show bot and TTS engine status
+The bot uses modern Discord slash commands:
+
+- `/join` - Join your current voice channel
+- `/play` - Replay the last generated voice response
+- `/leave` - Leave the current voice channel
+- `/help` - Show available commands and usage information
+- `/health` - Show detailed bot and system health status
 
 ### Voice Responses
 
 1. Join a voice channel in Discord
-2. Use `!join` to have the bot join your channel
+2. Use `/join` to have the bot join your channel
 3. Mention the bot (@SecondShiftAugie) in chat
-4. The bot will respond with both text and voice
+4. The bot will respond with both intelligent AI text and voice
 
 ## Reference Files
 
@@ -97,10 +99,10 @@ The bot requires two reference files to generate speech in a specific voice:
 4. The bot will fall back to text-only mode if VoxCPM fails
 
 ### Audio Not Playing
-1. Ensure the bot is in a voice channel (`!join`)
+1. Ensure the bot is in a voice channel (`/join`)
 2. Check that you have proper voice permissions
 3. Verify FFmpeg is installed for audio playback
-4. Use `!status` to check the bot's voice connection status
+4. Use `/health` to check the bot's voice connection status
 
 ### Performance Issues
 - Reduce `VOXCPM_INFERENCE_STEPS` for faster generation

@@ -67,7 +67,7 @@ class ConfigLoader:
     # Optional environment variables with their default values and types
     OPTIONAL_VARS = {
         'VOICE_CHANNEL_ID': (None, int),
-        'COMMAND_PREFIX': ('!', str),
+        # 'COMMAND_PREFIX' removed - bot now uses slash commands only
         'SAVE_PATH': ('./temp_audio', str),
         'VOXCPM_MODEL_PATH': ('openbmb/VoxCPM-0.5B', str),
         'VOXCPM_PROMPT_WAV': ('assets/model.wav', str),
@@ -178,8 +178,7 @@ class ConfigLoader:
                     elif expected_type == str:
                         if not value.strip():
                             result.add_error(f"{var} cannot be empty")
-                        elif var == 'COMMAND_PREFIX' and len(value) > 3:
-                            result.add_warning(f"{var} is unusually long ({len(value)} chars): {value}")
+                        # Command prefix validation removed - using slash commands only
                         elif var in ('VOXCPM_PROMPT_WAV', 'VOXCPM_PROMPT_TEXT') and not value.strip():
                             result.add_error(f"{var} path cannot be empty")
                         elif var == 'OLLAMA_BASE_URL' and not value.startswith(('http://', 'https://')):
@@ -265,15 +264,14 @@ class ConfigLoader:
                     raise ConfigValidationError(f"VOICE_CHANNEL_ID must be an integer, got: {voice_channel_id_str}")
             
             save_path = os.getenv('SAVE_PATH', './temp_audio')
-            command_prefix = os.getenv('COMMAND_PREFIX', '!')
+            # command_prefix removed - bot now uses slash commands only
             
             # Create and validate config
             config = BotConfig(
                 token=token,
                 channel_id=channel_id,
                 voice_channel_id=voice_channel_id,
-                save_path=save_path,
-                command_prefix=command_prefix
+                save_path=save_path
             )
             
             logger.info("Bot configuration loaded successfully")

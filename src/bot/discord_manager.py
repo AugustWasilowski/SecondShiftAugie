@@ -33,9 +33,9 @@ class DiscordBotManager:
         intents.voice_states = True
         
         self.bot = commands.Bot(
-            command_prefix=config.command_prefix,
+            command_prefix="!",  # Placeholder - not used since we only use slash commands
             intents=intents,
-            help_command=None  # We'll use our custom help command
+            help_command=None  # We use slash commands instead
         )
         self._setup_event_handlers()
     

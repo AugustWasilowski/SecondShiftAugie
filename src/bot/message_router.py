@@ -84,10 +84,7 @@ class MessageRouter:
             if message.author == self.bot_manager.get_bot_user():
                 return MessageResponse("", should_play_audio=False)
             
-            # Check if message is a command (starts with command prefix)
-            if message.content.startswith("!"):
-                # Commands are handled separately, return empty response
-                return MessageResponse("", should_play_audio=False)
+            # All commands are now slash commands - no need to check for prefix commands
             
             # Check if bot is mentioned in the message
             bot_user = self.bot_manager.get_bot_user()

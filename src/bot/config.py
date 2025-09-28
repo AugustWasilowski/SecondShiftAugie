@@ -14,7 +14,7 @@ class BotConfig:
     channel_id: int
     voice_channel_id: Optional[int] = None
     save_path: str = "./temp_audio"
-    command_prefix: str = "!"
+    # command_prefix removed - bot now uses slash commands only
     
     def __post_init__(self):
         """Validate configuration values."""
