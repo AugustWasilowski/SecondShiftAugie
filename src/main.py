@@ -99,8 +99,25 @@ class SecondShiftAugieBot:
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}, initiating graceful shutdown...")
             self._shutdown_requested = True
-            if not self._shutdown_event.is_set():
-                asyncio.create_task(self._trigger_shutdown())
+            
+            # Set the shutdown event immediately
+            self._shutdown_event.set()
+            
+            # Try to close the Discord bot if it exists
+            if self.bot_manager and self.bot_manager.bot and not self.bot_manager.bot.is_closed():
+                try:
+                    # Get the current event loop and schedule bot closure
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Schedule the bot closure in the event loop
+                        loop.create_task(self.bot_manager.bot.close())
+                        logger.info("Scheduled Discord bot closure")
+                    else:
+                        logger.warning("No event loop running, cannot schedule bot closure")
+                except RuntimeError as e:
+                    logger.warning(f"Could not schedule bot closure: {e}")
+                except Exception as e:
+                    logger.error(f"Error scheduling bot closure: {e}")
         
         # Set up signal handlers (Windows compatible)
         try:
@@ -112,8 +129,18 @@ class SecondShiftAugieBot:
             logger.warning(f"Could not set up signal handlers: {e}")
     
     async def _trigger_shutdown(self):
-        """Trigger shutdown event."""
+        """Trigger shutdown event and close Discord bot."""
+        logger.info("Triggering graceful shutdown...")
         self._shutdown_event.set()
+        
+        # Close the Discord bot to break out of the bot.start() call
+        if self.bot_manager and self.bot_manager.bot:
+            try:
+                logger.info("Closing Discord bot connection...")
+                await self.bot_manager.bot.close()
+                logger.info("Discord bot connection closed")
+            except Exception as e:
+                logger.error(f"Error closing Discord bot: {e}")
     
     def _register_health_checks(self):
         """Register health check functions for all components."""
@@ -589,57 +616,6 @@ class SecondShiftAugieBot:
         # Legacy prefix commands have been removed - bot now uses slash commands only
         # All command functionality is available through slash commands:
         # /join, /play, /leave, /help, /health
-            try:
-                # Get system health summary
-                health_summary = health_monitor.get_system_health_summary()
-                
-                # Create detailed health report
-                embed = nextcord.Embed(
-                    title="🏥 System Health Report",
-                    color=0x00ff00 if health_summary['overall_health'] == 'HEALTHY' else 
-                          0xff9900 if health_summary['overall_health'] == 'DEGRADED' else 0xff0000
-                )
-                
-                # Overall health
-                embed.add_field(
-                    name="Overall Health",
-                    value=f"**{health_summary['overall_health']}**",
-                    inline=False
-                )
-                
-                # Component summary
-                embed.add_field(
-                    name="Components",
-                    value=(
-                        f"✅ Healthy: {health_summary['healthy']}\n"
-                        f"⚠️ Degraded: {health_summary['degraded']}\n"
-                        f"❌ Failed: {health_summary['failed']}"
-                    ),
-                    inline=True
-                )
-                
-                # Feature availability
-                features_status = []
-                for feature in ["voice_generation", "audio_playback", "bot_commands", "bot_responses"]:
-                    status = degradation_manager.get_feature_status(feature)
-                    icon = "✅" if status == "NORMAL" else "⚠️" if status == "DEGRADED" else "❌"
-                    features_status.append(f"{icon} {feature.replace('_', ' ').title()}: {status}")
-                
-                embed.add_field(
-                    name="Features",
-                    value="\n".join(features_status),
-                    inline=True
-                )
-                
-                # Add timestamp
-                embed.timestamp = nextcord.utils.utcnow()
-                embed.set_footer(text="Health check performed")
-                
-                await ctx.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error in health command: {e}")
-                await ctx.send("❌ Error retrieving health information.")
     
     async def start(self) -> bool:
         """Start the bot application with comprehensive error handling.
@@ -690,8 +666,13 @@ class SecondShiftAugieBot:
             for attempt in range(max_retries):
                 try:
                     await self.bot_manager.start()
-                    logger.info("Successfully connected to Discord")
-                    return True
+                    # If we reach here, the bot has disconnected (either due to error or shutdown)
+                    if self._shutdown_requested:
+                        logger.info("Discord bot disconnected due to shutdown request")
+                        return True
+                    else:
+                        logger.warning("Discord bot disconnected unexpectedly")
+                        return False
                     
                 except nextcord.LoginFailure as login_error:
                     logger.error(f"Discord login failed: {login_error}")
@@ -699,6 +680,10 @@ class SecondShiftAugieBot:
                     return False
                     
                 except nextcord.HTTPException as http_error:
+                    if self._shutdown_requested:
+                        logger.info("Discord connection closed due to shutdown request")
+                        return True
+                    
                     logger.error(f"Discord HTTP error (attempt {attempt + 1}/{max_retries}): {http_error}")
                     if attempt < max_retries - 1:
                         logger.info(f"Retrying in {retry_delay} seconds...")
@@ -709,6 +694,10 @@ class SecondShiftAugieBot:
                         return False
                         
                 except Exception as connect_error:
+                    if self._shutdown_requested:
+                        logger.info("Discord connection closed due to shutdown request")
+                        return True
+                    
                     logger.error(f"Unexpected connection error (attempt {attempt + 1}/{max_retries}): {connect_error}")
                     if attempt < max_retries - 1:
                         logger.info(f"Retrying in {retry_delay} seconds...")
@@ -767,46 +756,20 @@ class SecondShiftAugieBot:
         try:
             logger.info("Starting bot application run cycle...")
             
-            # Start the bot
+            # Start the bot (this will block until the bot disconnects)
             success = await self.start()
             if not success:
                 logger.error("Failed to start bot - exiting")
                 health_monitor.update_component_state("main_app", ComponentState.FAILED)
                 return
             
-            logger.info("Bot started successfully - entering main loop")
+            # If we reach here, the bot has disconnected
+            if self._shutdown_requested:
+                logger.info("Bot disconnected due to shutdown request")
+            else:
+                logger.warning("Bot disconnected unexpectedly")
+            
             health_monitor.update_component_state("main_app", ComponentState.HEALTHY)
-            
-            # Start comprehensive health monitoring service
-            await health_monitoring_service.start_monitoring()
-            
-            # Start periodic health monitoring (legacy)
-            health_task = asyncio.create_task(self._periodic_health_check())
-            shutdown_task = asyncio.create_task(self._shutdown_event.wait())
-            
-            try:
-                # Wait for shutdown signal or health task completion
-                done, pending = await asyncio.wait(
-                    [shutdown_task, health_task],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                
-                # Cancel pending tasks
-                for task in pending:
-                    task.cancel()
-                    try:
-                        await task
-                    except asyncio.CancelledError:
-                        pass
-                
-                if self._shutdown_requested:
-                    logger.info("Shutdown requested - stopping bot")
-                else:
-                    logger.info("Main loop completed")
-                    
-            except Exception as loop_error:
-                logger.error(f"Error in main loop: {loop_error}")
-                health_monitor.update_component_state("main_app", ComponentState.FAILED)
             
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt")
@@ -819,7 +782,7 @@ class SecondShiftAugieBot:
         finally:
             logger.info("Initiating bot shutdown...")
             
-            # Stop health monitoring service
+            # Stop health monitoring service if it was started
             try:
                 await health_monitoring_service.stop_monitoring()
             except Exception as e:

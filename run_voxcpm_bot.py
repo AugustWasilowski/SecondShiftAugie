@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 async def main():
     """Main entry point for the VoxCPM bot."""
+    bot_app = None
     try:
         logger.info("Starting VoxCPM SecondShiftAugie bot...")
         
@@ -40,11 +41,22 @@ async def main():
         await bot_app.run()
         
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
+        logger.info("Bot stopped by user (KeyboardInterrupt)")
+        if bot_app:
+            logger.info("Initiating graceful shutdown...")
+            try:
+                await bot_app.stop()
+            except Exception as stop_error:
+                logger.error(f"Error during graceful shutdown: {stop_error}")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         import traceback
         logger.error(traceback.format_exc())
+        if bot_app:
+            try:
+                await bot_app.stop()
+            except:
+                pass
         sys.exit(1)
 
 
