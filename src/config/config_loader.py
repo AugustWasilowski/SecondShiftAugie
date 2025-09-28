@@ -19,6 +19,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from src.tts.config import TTSConfig
 from src.bot.config import BotConfig
+from src.config.ollama_config import OllamaConfig
 
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,14 @@ class ConfigLoader:
         'VOXCPM_DENOISE': (True, bool),
         'VOXCPM_MAX_LENGTH': (4096, int),
         'AUDIO_CLEANUP_HOURS': (24, int),
+        'OLLAMA_BASE_URL': ('http://localhost:11434', str),
+        'OLLAMA_MODEL': ('qwen2.5:1.7b', str),
+        'OLLAMA_TIMEOUT': (30.0, float),
+        'OLLAMA_MAX_RETRIES': (3, int),
+        'OLLAMA_RETRY_DELAY': (1.0, float),
+        'OLLAMA_MAX_RESPONSE_LENGTH': (500, int),
+        'OLLAMA_TEMPERATURE': (0.7, float),
+        'SYSTEM_PROMPT_FILE': ('ollama_system_prompt.json', str),
     }
     
     def __init__(self, env_file: str = '.env'):
@@ -152,10 +161,20 @@ class ConfigLoader:
                             result.add_warning(f"{var} should be between 100-10000 for optimal performance, got: {parsed_value}")
                         elif var == 'AUDIO_CLEANUP_HOURS' and parsed_value < 1:
                             result.add_error(f"{var} must be at least 1 hour, got: {parsed_value}")
+                        elif var == 'OLLAMA_MAX_RETRIES' and (parsed_value < 0 or parsed_value > 10):
+                            result.add_warning(f"{var} should be between 0-10 for optimal performance, got: {parsed_value}")
+                        elif var == 'OLLAMA_MAX_RESPONSE_LENGTH' and (parsed_value < 50 or parsed_value > 2000):
+                            result.add_warning(f"{var} should be between 50-2000 characters for optimal performance, got: {parsed_value}")
                     elif expected_type == float:
                         parsed_value = float(value)
                         if var == 'VOXCPM_CFG_VALUE' and (parsed_value < 0.1 or parsed_value > 10.0):
                             result.add_warning(f"{var} should be between 0.1-10.0 for optimal performance, got: {parsed_value}")
+                        elif var == 'OLLAMA_TIMEOUT' and (parsed_value < 1.0 or parsed_value > 300.0):
+                            result.add_warning(f"{var} should be between 1.0-300.0 seconds for optimal performance, got: {parsed_value}")
+                        elif var == 'OLLAMA_RETRY_DELAY' and (parsed_value < 0.1 or parsed_value > 60.0):
+                            result.add_warning(f"{var} should be between 0.1-60.0 seconds for optimal performance, got: {parsed_value}")
+                        elif var == 'OLLAMA_TEMPERATURE' and (parsed_value < 0.0 or parsed_value > 2.0):
+                            result.add_error(f"{var} must be between 0.0-2.0, got: {parsed_value}")
                     elif expected_type == str:
                         if not value.strip():
                             result.add_error(f"{var} cannot be empty")
@@ -163,6 +182,12 @@ class ConfigLoader:
                             result.add_warning(f"{var} is unusually long ({len(value)} chars): {value}")
                         elif var in ('VOXCPM_PROMPT_WAV', 'VOXCPM_PROMPT_TEXT') and not value.strip():
                             result.add_error(f"{var} path cannot be empty")
+                        elif var == 'OLLAMA_BASE_URL' and not value.startswith(('http://', 'https://')):
+                            result.add_warning(f"{var} should start with http:// or https://, got: {value}")
+                        elif var == 'OLLAMA_MODEL' and not value.strip():
+                            result.add_error(f"{var} cannot be empty")
+                        elif var == 'SYSTEM_PROMPT_FILE' and not value.strip():
+                            result.add_error(f"{var} cannot be empty")
                             
                 except ValueError as e:
                     result.add_error(f"{var} type validation failed: expected {expected_type.__name__}, got '{value}' - {e}")
@@ -318,12 +343,73 @@ class ConfigLoader:
                 raise
             raise ConfigValidationError(f"Error loading TTS configuration: {e}")
     
-    def load_all_configs(self) -> tuple[BotConfig, TTSConfig]:
+    def load_ollama_config(self) -> OllamaConfig:
+        """
+        Load and create OllamaConfig from environment variables.
+        
+        Returns:
+            OllamaConfig: Configured Ollama settings
+            
+        Raises:
+            ConfigValidationError: If Ollama configuration is invalid
+        """
+        try:
+            # Load Ollama configuration with defaults
+            base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+            model_name = os.getenv('OLLAMA_MODEL', 'qwen2.5:1.7b')
+            system_prompt_file = os.getenv('SYSTEM_PROMPT_FILE', 'ollama_system_prompt.json')
+            
+            # Parse numeric values with validation
+            try:
+                timeout = float(os.getenv('OLLAMA_TIMEOUT', '30.0'))
+            except ValueError:
+                raise ConfigValidationError(f"OLLAMA_TIMEOUT must be a number, got: {os.getenv('OLLAMA_TIMEOUT')}")
+            
+            try:
+                max_retries = int(os.getenv('OLLAMA_MAX_RETRIES', '3'))
+            except ValueError:
+                raise ConfigValidationError(f"OLLAMA_MAX_RETRIES must be an integer, got: {os.getenv('OLLAMA_MAX_RETRIES')}")
+            
+            try:
+                retry_delay = float(os.getenv('OLLAMA_RETRY_DELAY', '1.0'))
+            except ValueError:
+                raise ConfigValidationError(f"OLLAMA_RETRY_DELAY must be a number, got: {os.getenv('OLLAMA_RETRY_DELAY')}")
+            
+            try:
+                max_response_length = int(os.getenv('OLLAMA_MAX_RESPONSE_LENGTH', '500'))
+            except ValueError:
+                raise ConfigValidationError(f"OLLAMA_MAX_RESPONSE_LENGTH must be an integer, got: {os.getenv('OLLAMA_MAX_RESPONSE_LENGTH')}")
+            
+            try:
+                temperature = float(os.getenv('OLLAMA_TEMPERATURE', '0.7'))
+            except ValueError:
+                raise ConfigValidationError(f"OLLAMA_TEMPERATURE must be a number, got: {os.getenv('OLLAMA_TEMPERATURE')}")
+            
+            config = OllamaConfig(
+                base_url=base_url,
+                model_name=model_name,
+                timeout=timeout,
+                max_retries=max_retries,
+                retry_delay=retry_delay,
+                max_response_length=max_response_length,
+                temperature=temperature,
+                system_prompt_file=system_prompt_file
+            )
+            
+            logger.info("Ollama configuration loaded successfully")
+            return config
+            
+        except Exception as e:
+            if isinstance(e, ConfigValidationError):
+                raise
+            raise ConfigValidationError(f"Error loading Ollama configuration: {e}")
+    
+    def load_all_configs(self) -> tuple[BotConfig, TTSConfig, OllamaConfig]:
         """
         Load all configurations with comprehensive validation.
         
         Returns:
-            tuple: (BotConfig, TTSConfig)
+            tuple: (BotConfig, TTSConfig, OllamaConfig)
             
         Raises:
             ConfigValidationError: If any configuration is invalid
@@ -350,9 +436,10 @@ class ConfigLoader:
         # Load individual configs
         bot_config = self.load_bot_config()
         tts_config = self.load_tts_config(bot_config.save_path)
+        ollama_config = self.load_ollama_config()
         
         logger.info("All configurations loaded and validated successfully")
-        return bot_config, tts_config
+        return bot_config, tts_config, ollama_config
     
     def get_validation_summary(self) -> Dict[str, Any]:
         """

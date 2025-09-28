@@ -24,6 +24,7 @@ python-dotenv
 # AI/ML dependencies
 openai
 elevenlabs
+ollama
 
 # Utility dependencies
 numpy
