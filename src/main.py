@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 import signal
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -473,18 +474,29 @@ class SecondShiftAugieBot:
         """Set up Discord bot event handlers and commands."""
         bot = self.bot_manager.bot
         
-        # Event handlers
+        # Event handlers with enhanced error handling and logging
         @bot.event
         async def on_ready():
             """Handle bot ready event with comprehensive error handling.
             
-            Requirements 4.2: Proper error logging for debugging.
+            Requirements 1.1, 1.2, 2.2, 4.1, 4.2: Enhanced error handling and logging.
             """
+            event_context = {
+                "event": "on_ready",
+                "bot_user": str(bot.user) if bot.user else "Unknown",
+                "bot_id": bot.user.id if bot.user else None,
+                "guild_count": len(bot.guilds) if bot.guilds else 0
+            }
+            
             try:
-                logger.info(f"Bot logged in as {bot.user} (ID: {bot.user.id})")
-                logger.info(f"Bot is in {len(bot.guilds)} guilds")
+                logger.info(f"Bot ready event triggered - User: {event_context['bot_user']} (ID: {event_context['bot_id']})")
+                logger.info(f"Bot is connected to {event_context['guild_count']} guilds")
                 
-                # Set bot status with error handling
+                # Update component health status
+                health_monitor.update_component_state("discord_connection", ComponentState.HEALTHY)
+                log_component_recovery("discord_connection", "bot_ready")
+                
+                # Set bot status with comprehensive error handling
                 try:
                     activity = nextcord.Activity(
                         type=nextcord.ActivityType.listening,
@@ -494,121 +506,383 @@ class SecondShiftAugieBot:
                         status=nextcord.Status.online,
                         activity=activity
                     )
-                    logger.info("Bot status set successfully")
+                    logger.info("Bot presence and activity status set successfully")
+                    
+                except nextcord.HTTPException as http_error:
+                    log_component_error("discord_presence", "set_status", http_error, ErrorSeverity.LOW)
+                    logger.warning(f"HTTP error setting bot status (code: {http_error.status}): {http_error.text}")
+                except nextcord.InvalidArgument as arg_error:
+                    log_component_error("discord_presence", "set_status", arg_error, ErrorSeverity.LOW)
+                    logger.warning(f"Invalid argument for bot status: {arg_error}")
                 except Exception as status_error:
-                    logger.warning(f"Could not set bot status: {status_error}")
+                    log_component_error("discord_presence", "set_status", status_error, ErrorSeverity.LOW)
+                    logger.warning(f"Unexpected error setting bot status: {status_error}")
                 
-                # Send startup message to configured channel
+                # Send startup message to configured channel with enhanced error handling
                 try:
+                    if not self.config or not hasattr(self.config, 'channel_id'):
+                        logger.warning("No channel configuration found - skipping startup message")
+                        return
+                        
                     channel = bot.get_channel(self.config.channel_id)
-                    if channel:
-                        # Check if we have permission to send messages
+                    if not channel:
+                        logger.warning(f"Configured channel not found (ID: {self.config.channel_id}) - checking if bot has access")
+                        # Try to fetch channel to get more detailed error
                         try:
+                            channel = await bot.fetch_channel(self.config.channel_id)
+                        except nextcord.NotFound:
+                            logger.error(f"Channel {self.config.channel_id} does not exist or bot cannot access it")
+                            return
+                        except nextcord.Forbidden:
+                            logger.error(f"Bot lacks permission to access channel {self.config.channel_id}")
+                            return
+                        except Exception as fetch_error:
+                            logger.error(f"Error fetching channel {self.config.channel_id}: {fetch_error}")
+                            return
+                    
+                    # Verify channel permissions before attempting to send message
+                    try:
+                        if hasattr(channel, 'guild') and channel.guild:
                             permissions = channel.permissions_for(channel.guild.me)
                             if not permissions.send_messages:
-                                logger.warning(f"Bot lacks permission to send messages in channel: {channel.name}")
+                                logger.warning(f"Bot lacks 'Send Messages' permission in channel: {channel.name} ({channel.id})")
+                                health_monitor.update_component_state("startup_messaging", ComponentState.DEGRADED, "Missing send messages permission")
                                 return
-                        except Exception as perm_error:
-                            logger.warning(f"Could not check channel permissions: {perm_error}")
+                            if not permissions.view_channel:
+                                logger.warning(f"Bot lacks 'View Channel' permission in channel: {channel.name} ({channel.id})")
+                                return
+                        else:
+                            logger.debug("Channel permission check skipped (DM or unknown channel type)")
+                            
+                    except Exception as perm_error:
+                        logger.warning(f"Could not verify channel permissions: {perm_error}")
+                        # Continue anyway - attempt to send message
+                    
+                    # Send startup message with retry logic
+                    startup_msg = "Second Shift Augie reporting for duty."
+                    
+                    try:
+                        sent_message = await channel.send(startup_msg)
+                        logger.info(f"Startup message sent successfully to channel: {channel.name} ({channel.id})")
+                        health_monitor.update_component_state("startup_messaging", ComponentState.HEALTHY)
                         
-                        startup_msg = "Second Shift Augie reporting for duty."
+                    except nextcord.HTTPException as http_error:
+                        log_component_error("startup_messaging", "send_message", http_error, ErrorSeverity.MEDIUM)
+                        logger.warning(f"HTTP error sending startup message (code: {http_error.status}): {http_error.text}")
                         
-                        await channel.send(startup_msg)
-                        logger.info(f"Startup message sent to channel: {channel.name}")
+                        # Retry with simpler message if rate limited
+                        if http_error.status == 429:  # Rate limited
+                            logger.info("Rate limited - will retry startup message later")
+                            # Don't retry immediately to avoid further rate limiting
                         
-                    else:
-                        logger.warning(f"Configured channel not found: {self.config.channel_id}")
+                    except nextcord.Forbidden as forbidden_error:
+                        log_component_error("startup_messaging", "send_message", forbidden_error, ErrorSeverity.MEDIUM)
+                        logger.error(f"Bot lacks permission to send startup message in channel: {channel.name}")
+                        health_monitor.update_component_state("startup_messaging", ComponentState.FAILED, "Forbidden to send messages")
                         
-                except nextcord.HTTPException as http_error:
-                    logger.warning(f"HTTP error sending startup message: {http_error}")
-                except nextcord.Forbidden:
-                    logger.warning("Bot lacks permission to send startup message")
-                except Exception as startup_error:
-                    logger.warning(f"Could not send startup message: {startup_error}")
+                    except Exception as send_error:
+                        log_component_error("startup_messaging", "send_message", send_error, ErrorSeverity.MEDIUM)
+                        logger.warning(f"Unexpected error sending startup message: {send_error}")
+                        
+                except Exception as channel_error:
+                    log_component_error("startup_messaging", "channel_access", channel_error, ErrorSeverity.MEDIUM)
+                    logger.warning(f"Error accessing startup message channel: {channel_error}")
+                
+                # Log successful ready event completion
+                logger.info("Bot ready event completed successfully")
                 
             except Exception as ready_error:
-                logger.error(f"Error in on_ready handler: {ready_error}")
+                # Critical error in ready handler - log with full context
+                log_component_error("discord_ready_handler", "event_processing", ready_error, ErrorSeverity.HIGH)
+                logger.error(f"Critical error in on_ready handler: {ready_error}")
+                logger.error(f"Event context: {event_context}")
+                
+                # Log full traceback for debugging
+                import traceback
+                logger.error(f"on_ready handler traceback:\n{traceback.format_exc()}")
+                
+                # Update health monitoring
+                health_monitor.update_component_state("discord_ready_handler", ComponentState.FAILED, str(ready_error))
         
         @bot.event
         async def on_disconnect():
-            """Handle bot disconnect event."""
-            logger.warning("Bot disconnected from Discord")
+            """Handle bot disconnect event with enhanced logging.
+            
+            Requirements 1.2, 4.1, 4.2: Proper error logging and graceful degradation.
+            """
+            try:
+                disconnect_context = {
+                    "event": "on_disconnect",
+                    "timestamp": time.time(),
+                    "was_ready": bot.is_ready() if hasattr(bot, 'is_ready') else False
+                }
+                
+                logger.warning(f"Bot disconnected from Discord - Context: {disconnect_context}")
+                
+                # Update component health status
+                health_monitor.update_component_state("discord_connection", ComponentState.FAILED, "Bot disconnected")
+                log_component_error("discord_connection", "disconnect", Exception("Bot disconnected"), ErrorSeverity.HIGH)
+                
+                # Check if this is an unexpected disconnect
+                if not self._shutdown_requested:
+                    logger.warning("Unexpected disconnect detected - bot will attempt to reconnect")
+                    health_monitor.update_component_state("discord_reconnection", ComponentState.DEGRADED, "Attempting reconnection")
+                else:
+                    logger.info("Disconnect was expected due to shutdown request")
+                
+            except Exception as disconnect_error:
+                logger.error(f"Error in on_disconnect handler: {disconnect_error}")
+                # Don't re-raise as this could interfere with reconnection
         
         @bot.event
         async def on_resumed():
-            """Handle bot resume event."""
-            logger.info("Bot connection resumed")
+            """Handle bot resume event with enhanced logging.
+            
+            Requirements 1.2, 4.1, 4.2: Proper error logging and recovery tracking.
+            """
+            try:
+                resume_context = {
+                    "event": "on_resumed",
+                    "timestamp": time.time(),
+                    "guild_count": len(bot.guilds) if bot.guilds else 0
+                }
+                
+                logger.info(f"Bot connection resumed successfully - Context: {resume_context}")
+                
+                # Update component health status
+                health_monitor.update_component_state("discord_connection", ComponentState.HEALTHY)
+                log_component_recovery("discord_connection", "resume")
+                
+                # Clear any reconnection degradation status
+                health_monitor.update_component_state("discord_reconnection", ComponentState.HEALTHY)
+                
+            except Exception as resume_error:
+                log_component_error("discord_resume_handler", "event_processing", resume_error, ErrorSeverity.MEDIUM)
+                logger.error(f"Error in on_resumed handler: {resume_error}")
         
         @bot.event
         async def on_error(event, *args, **kwargs):
-            """Handle Discord.py errors.
+            """Handle Discord.py errors with comprehensive logging and context.
             
-            Requirements 4.2: Proper error logging for debugging.
+            Requirements 1.2, 2.2, 4.1, 4.2: Enhanced error logging and debugging context.
             """
-            logger.error(f"Discord.py error in event '{event}': {args}")
-            import traceback
-            logger.error(traceback.format_exc())
+            try:
+                # Build comprehensive error context
+                error_context = {
+                    "event_name": event,
+                    "timestamp": time.time(),
+                    "args_count": len(args) if args else 0,
+                    "kwargs_keys": list(kwargs.keys()) if kwargs else [],
+                    "bot_ready": bot.is_ready() if hasattr(bot, 'is_ready') else False,
+                    "guild_count": len(bot.guilds) if bot.guilds else 0
+                }
+                
+                # Log the error with context
+                logger.error(f"Discord.py error in event '{event}' - Context: {error_context}")
+                
+                # Log arguments safely (avoid logging sensitive data)
+                if args:
+                    safe_args = []
+                    for i, arg in enumerate(args):
+                        if hasattr(arg, '__dict__'):
+                            # For Discord objects, log type and basic info
+                            safe_args.append(f"{type(arg).__name__}(id={getattr(arg, 'id', 'unknown')})")
+                        else:
+                            # For simple types, log directly but truncate if too long
+                            arg_str = str(arg)
+                            if len(arg_str) > 100:
+                                arg_str = arg_str[:97] + "..."
+                            safe_args.append(arg_str)
+                    
+                    logger.error(f"Event args: {safe_args}")
+                
+                # Log full traceback for debugging
+                import traceback
+                logger.error(f"Discord.py error traceback:\n{traceback.format_exc()}")
+                
+                # Update health monitoring based on event type
+                if event in ['on_message', 'on_interaction']:
+                    # Message/interaction errors are high priority
+                    log_component_error("discord_message_handling", event, Exception(f"Discord.py error in {event}"), ErrorSeverity.HIGH)
+                    health_monitor.update_component_state("discord_message_handling", ComponentState.DEGRADED, f"Error in {event}")
+                elif event in ['on_ready', 'on_disconnect', 'on_resumed']:
+                    # Connection events are critical
+                    log_component_error("discord_connection", event, Exception(f"Discord.py error in {event}"), ErrorSeverity.CRITICAL)
+                    health_monitor.update_component_state("discord_connection", ComponentState.FAILED, f"Error in {event}")
+                else:
+                    # Other events are medium priority
+                    log_component_error("discord_event_handling", event, Exception(f"Discord.py error in {event}"), ErrorSeverity.MEDIUM)
+                    health_monitor.update_component_state("discord_event_handling", ComponentState.DEGRADED, f"Error in {event}")
+                
+            except Exception as error_handler_error:
+                # Error in error handler - use basic logging to avoid recursion
+                logger.critical(f"Error in on_error handler itself: {error_handler_error}")
+                logger.critical(f"Original event was: {event}")
         
         @bot.event
         async def on_message(message):
-            """Handle incoming messages with comprehensive error handling.
+            """Handle incoming messages with comprehensive error handling and logging.
             
-            Requirements 4.2: Proper error logging for debugging.
+            Requirements 1.1, 1.2, 2.2, 4.1, 4.2: Enhanced message processing with proper error handling.
             """
+            message_context = {
+                "message_id": message.id,
+                "author_id": message.author.id,
+                "channel_id": message.channel.id,
+                "guild_id": getattr(message.guild, 'id', None),
+                "content_length": len(message.content) if message.content else 0,
+                "has_attachments": len(message.attachments) > 0 if message.attachments else False
+            }
+            
             try:
-                # Route all non-bot messages through message router (no prefix commands)
-                # All commands are now handled via slash commands
-                if message.author != bot.user:
-                    try:
-                        response = await self.message_router.route_message(message)
+                # Skip bot messages to prevent loops
+                if message.author == bot.user:
+                    return
+                
+                # Log message processing start (debug level to avoid spam)
+                logger.debug(f"Processing message from {message.author} in {message.channel}: {message.content[:50]}...")
+                
+                # Route message through message router with comprehensive error handling
+                try:
+                    # Validate message router is available
+                    if not self.message_router:
+                        logger.error("Message router not initialized - cannot process message")
+                        health_monitor.update_component_state("message_processing", ComponentState.FAILED, "Message router not available")
+                        return
+                    
+                    # Route the message
+                    response = await self.message_router.route_message(message)
+                    
+                    # Send response with enhanced error handling and fallback mechanisms
+                    if response and response.text_response:
+                        await self._send_message_response(message, response, message_context)
+                    else:
+                        logger.debug(f"No response generated for message {message_context['message_id']}")
                         
-                        # Send text response with proper audio coordination (Requirement 4.4)
-                        if response.text_response:
-                            try:
-                                # Prepare text response with audio indicator (Requirement 4.4)
-                                text_to_send = response.text_response
-                                
-                                # Add audio indicator when both text and voice responses are sent (Requirement 4.4)
-                                if response.should_play_audio and response.audio_response and response.audio_response.success:
-                                    text_to_send += " 🎤"  # Indicate audio was successfully played
-                                    logger.debug("Added audio success indicator to text response")
-                                elif response.audio_response and not response.audio_response.success:
-                                    # TTS generation attempted but failed - add failure indicator (Requirement 4.5)
-                                    text_to_send += " ⚠️"  # Indicate audio generation failed
-                                    logger.debug("Added audio failure indicator to text response")
-                                elif self.bot_manager.is_in_voice_channel() and not self.tts_engine.is_ready():
-                                    # In voice channel but TTS not ready
-                                    text_to_send += " 🔇"  # Indicate TTS unavailable
-                                    logger.debug("Added TTS unavailable indicator to text response")
-                                
-                                await message.reply(text_to_send, mention_author=True)
-                                
-                            except nextcord.HTTPException as http_error:
-                                logger.error(f"HTTP error sending message reply: {http_error}")
-                                # Try sending without reply if reply fails
-                                try:
-                                    await message.channel.send(response.text_response)
-                                except Exception as fallback_error:
-                                    logger.error(f"Failed to send fallback message: {fallback_error}")
-                                    
-                            except nextcord.Forbidden:
-                                logger.error("Bot lacks permission to send messages in this channel")
-                                
-                            except Exception as send_error:
-                                logger.error(f"Error sending message reply: {send_error}")
-                        
-                    except Exception as route_error:
-                        logger.error(f"Error routing message: {route_error}")
-                        # Try to send an error message to the user
-                        try:
-                            if message.author != bot.user:  # Don't reply to ourselves
-                                await message.reply("Sorry, I encountered an error processing your message.", mention_author=True)
-                        except:
-                            pass  # If we can't send error message, just log it
-                            
+                except Exception as route_error:
+                    # Log routing error with context
+                    log_component_error("message_routing", "route_message", route_error, ErrorSeverity.HIGH)
+                    logger.error(f"Error routing message {message_context['message_id']}: {route_error}")
+                    logger.error(f"Message context: {message_context}")
+                    
+                    # Update health monitoring
+                    health_monitor.update_component_state("message_processing", ComponentState.DEGRADED, str(route_error))
+                    
+                    # Attempt to send error response to user with fallback
+                    await self._send_error_response(message, "I encountered an error processing your message.", route_error)
+                    
             except Exception as message_error:
-                logger.error(f"Unexpected error in on_message handler: {message_error}")
-                # Don't try to send a message here as it might cause recursion
+                # Critical error in message handler
+                log_component_error("discord_message_handler", "event_processing", message_error, ErrorSeverity.CRITICAL)
+                logger.error(f"Critical error in on_message handler: {message_error}")
+                logger.error(f"Message context: {message_context}")
+                
+                # Log full traceback for debugging
+                import traceback
+                logger.error(f"on_message handler traceback:\n{traceback.format_exc()}")
+                
+                # Update health monitoring
+                health_monitor.update_component_state("discord_message_handler", ComponentState.FAILED, str(message_error))
+                
+                # Don't attempt to send error message here to avoid potential recursion
+    
+    async def _send_message_response(self, message, response, message_context):
+        """Send message response with comprehensive error handling and fallback mechanisms.
+        
+        Requirements 1.1, 1.2, 4.1, 4.2: Proper response sending with fallback mechanisms.
+        """
+        try:
+            # Prepare text response with audio indicators
+            text_to_send = response.text_response
+            
+            # Add audio indicators based on response state
+            if response.should_play_audio and response.audio_response and response.audio_response.success:
+                text_to_send += " 🎤"  # Audio successfully played
+                logger.debug(f"Added audio success indicator to message {message_context['message_id']}")
+            elif response.audio_response and not response.audio_response.success:
+                text_to_send += " ⚠️"  # Audio generation failed
+                logger.debug(f"Added audio failure indicator to message {message_context['message_id']}")
+            elif (hasattr(self, 'bot_manager') and self.bot_manager and 
+                  self.bot_manager.is_in_voice_channel() and 
+                  hasattr(self, 'tts_engine') and self.tts_engine and 
+                  not self.tts_engine.is_ready()):
+                text_to_send += " 🔇"  # TTS unavailable
+                logger.debug(f"Added TTS unavailable indicator to message {message_context['message_id']}")
+            
+            # Attempt to send reply first (preferred method)
+            try:
+                sent_message = await message.reply(text_to_send, mention_author=True)
+                logger.debug(f"Successfully sent reply to message {message_context['message_id']}")
+                return sent_message
+                
+            except nextcord.HTTPException as http_error:
+                # Handle specific HTTP errors
+                log_component_error("message_response", "send_reply", http_error, ErrorSeverity.MEDIUM)
+                logger.warning(f"HTTP error sending reply (code: {http_error.status}): {http_error.text}")
+                
+                # Fallback to channel message if reply fails
+                try:
+                    sent_message = await message.channel.send(text_to_send)
+                    logger.info(f"Sent fallback channel message for {message_context['message_id']}")
+                    return sent_message
+                    
+                except Exception as fallback_error:
+                    log_component_error("message_response", "send_fallback", fallback_error, ErrorSeverity.HIGH)
+                    logger.error(f"Failed to send fallback message: {fallback_error}")
+                    raise fallback_error
+                    
+            except nextcord.Forbidden as forbidden_error:
+                log_component_error("message_response", "send_reply", forbidden_error, ErrorSeverity.HIGH)
+                logger.error(f"Bot lacks permission to reply in channel {message_context['channel_id']}")
+                
+                # Try direct channel message (might work if reply permissions are different)
+                try:
+                    sent_message = await message.channel.send(f"@{message.author.display_name}: {text_to_send}")
+                    logger.info(f"Sent mention-based message as fallback for {message_context['message_id']}")
+                    return sent_message
+                except Exception as mention_error:
+                    logger.error(f"Failed to send mention-based fallback: {mention_error}")
+                    raise forbidden_error
+                    
+            except Exception as send_error:
+                log_component_error("message_response", "send_reply", send_error, ErrorSeverity.HIGH)
+                logger.error(f"Unexpected error sending message reply: {send_error}")
+                raise send_error
+                
+        except Exception as response_error:
+            log_component_error("message_response", "prepare_response", response_error, ErrorSeverity.HIGH)
+            logger.error(f"Error preparing message response: {response_error}")
+            raise response_error
+    
+    async def _send_error_response(self, message, error_message, original_error):
+        """Send error response to user with fallback mechanisms.
+        
+        Requirements 1.2, 4.1, 4.2: Proper error communication with fallback.
+        """
+        try:
+            # Try to send error message to user
+            try:
+                await message.reply(error_message, mention_author=True)
+                logger.debug(f"Sent error response to user for message {message.id}")
+                
+            except nextcord.HTTPException as http_error:
+                logger.warning(f"HTTP error sending error response: {http_error}")
+                # Try channel message as fallback
+                try:
+                    await message.channel.send(f"@{message.author.display_name}: {error_message}")
+                except Exception:
+                    logger.warning("Could not send error response via any method")
+                    
+            except nextcord.Forbidden:
+                logger.warning(f"Cannot send error response - missing permissions in channel {message.channel.id}")
+                
+            except Exception as error_send_error:
+                logger.warning(f"Unexpected error sending error response: {error_send_error}")
+                
+        except Exception as error_response_error:
+            # Error in error response handler - just log it
+            logger.error(f"Error in error response handler: {error_response_error}")
+            # Don't re-raise to avoid recursion
         
         # Command error handler removed - bot now uses slash commands only
         # Slash command errors are handled within the SlashCommandHandler class
