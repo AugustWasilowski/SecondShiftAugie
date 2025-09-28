@@ -45,8 +45,11 @@ from src.config.ollama_config import OllamaConfig
 # Import error handling utilities
 from src.utils.error_handler import (
     health_monitor, degradation_manager, log_component_error, log_component_recovery,
-    ErrorSeverity, ComponentState, retry_with_backoff
+    ErrorSeverity, ComponentState, retry_with_backoff, ai_error_handler
 )
+
+# Import health monitoring service
+from src.utils.health_monitoring import health_monitoring_service
 
 
 # Configure logging
@@ -83,6 +86,9 @@ class SecondShiftAugieBot:
         # Initialize component health monitoring
         health_monitor.update_component_state("main_app", ComponentState.HEALTHY)
         
+        # Register health check functions
+        self._register_health_checks()
+        
         # Set up signal handlers for graceful shutdown
         self._setup_signal_handlers()
         
@@ -108,6 +114,66 @@ class SecondShiftAugieBot:
     async def _trigger_shutdown(self):
         """Trigger shutdown event."""
         self._shutdown_event.set()
+    
+    def _register_health_checks(self):
+        """Register health check functions for all components."""
+        logger.info("Registering component health checks")
+        
+        # Register health checks that will be available after initialization
+        # These will be registered properly in initialize_components
+        pass
+    
+    def _register_component_health_checks(self):
+        """Register health checks for initialized components."""
+        logger.info("Registering health checks for initialized components")
+        
+        # Register TTS engine health check
+        if self.tts_engine:
+            async def tts_health_check():
+                try:
+                    return self.tts_engine.is_ready()
+                except Exception as e:
+                    logger.debug(f"TTS health check error: {e}")
+                    return False
+            
+            health_monitoring_service.register_health_check("tts_engine", tts_health_check)
+        
+        # Register Ollama AI engine health check
+        if self.ollama_engine:
+            async def ollama_health_check():
+                try:
+                    return await self.ollama_engine.health_check()
+                except Exception as e:
+                    logger.debug(f"Ollama health check error: {e}")
+                    return False
+            
+            health_monitoring_service.register_health_check("ollama_engine", ollama_health_check)
+        
+        # Register Discord bot manager health check
+        if self.bot_manager:
+            async def discord_health_check():
+                try:
+                    return self.bot_manager.is_ready()
+                except Exception as e:
+                    logger.debug(f"Discord health check error: {e}")
+                    return False
+            
+            health_monitoring_service.register_health_check("discord_manager", discord_health_check)
+        
+        # Register audio manager health check
+        if self.audio_manager:
+            async def audio_health_check():
+                try:
+                    # Audio manager doesn't have a specific health check, so check if it exists
+                    storage_info = self.audio_manager.get_storage_info()
+                    return storage_info is not None
+                except Exception as e:
+                    logger.debug(f"Audio manager health check error: {e}")
+                    return False
+            
+            health_monitoring_service.register_health_check("audio_manager", audio_health_check)
+        
+        logger.info("Component health checks registered successfully")
     
     def load_configuration(self) -> bool:
         """
@@ -365,6 +431,9 @@ class SecondShiftAugieBot:
                 logger.warning("Voice generation disabled - bot will operate in text-only mode")
             if not degradation_manager.is_feature_available("audio_playback"):
                 logger.warning("Audio playback disabled - no voice channel functionality")
+            
+            # Register health checks for initialized components
+            self._register_component_health_checks()
             
             return True
             
@@ -787,7 +856,10 @@ class SecondShiftAugieBot:
             logger.info("Bot started successfully - entering main loop")
             health_monitor.update_component_state("main_app", ComponentState.HEALTHY)
             
-            # Start periodic health monitoring
+            # Start comprehensive health monitoring service
+            await health_monitoring_service.start_monitoring()
+            
+            # Start periodic health monitoring (legacy)
             health_task = asyncio.create_task(self._periodic_health_check())
             shutdown_task = asyncio.create_task(self._shutdown_event.wait())
             
@@ -825,6 +897,13 @@ class SecondShiftAugieBot:
             logger.error(traceback.format_exc())
         finally:
             logger.info("Initiating bot shutdown...")
+            
+            # Stop health monitoring service
+            try:
+                await health_monitoring_service.stop_monitoring()
+            except Exception as e:
+                logger.error(f"Error stopping health monitoring: {e}")
+            
             await self.stop()
     
     async def _periodic_health_check(self):

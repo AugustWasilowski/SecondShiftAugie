@@ -12,6 +12,8 @@ from typing import Optional, TYPE_CHECKING
 import nextcord
 from nextcord.ext import commands
 
+from src.utils.error_handler import ai_error_handler, degradation_manager
+
 if TYPE_CHECKING:
     from ..tts.voxcpm_engine import VoxCPMEngine
     from ..audio.audio_manager import AudioManager
@@ -276,43 +278,74 @@ class MessageRouter:
     
     def is_ai_available(self) -> bool:
         """
-        Check if AI functionality is available.
+        Check if AI functionality is available considering circuit breaker state.
+        
+        Implements requirement 6.5: Indicate when AI features are unavailable.
         
         Returns:
             bool: True if AI is available and ready, False otherwise
         """
-        return self.ollama_engine is not None and self.ollama_engine.is_ready()
+        if not self.ollama_engine or not self.ollama_engine.is_ready():
+            return False
+        
+        # Check circuit breaker state
+        return ai_error_handler.should_use_ai()
     
     async def get_ai_status(self) -> dict:
         """
-        Get detailed AI status information.
+        Get detailed AI status information including circuit breaker status.
+        
+        Implements requirement 6.4: Detailed logging for AI interactions and errors.
         
         Returns:
-            dict: AI status information including availability and health
+            dict: AI status information including availability, health, and circuit breaker status
         """
         if not self.ollama_engine:
             return {
                 "available": False,
                 "ready": False,
-                "error": "AI engine not configured"
+                "healthy": False,
+                "error": "AI engine not configured",
+                "circuit_breakers": None,
+                "degradation_active": True
             }
         
-        ready = self.ollama_engine.is_ready()
-        
-        # Perform health check if ready
-        health_ok = False
-        if ready:
-            try:
-                health_ok = await self.ollama_engine.health_check()
-            except Exception as e:
-                self._logger.warning(f"AI health check failed: {e}")
-        
-        return {
-            "available": True,
-            "ready": ready,
-            "healthy": health_ok,
-            "error": None if ready else "AI engine not ready"
-        }
+        try:
+            # Get comprehensive AI health status
+            ai_health_status = self.ollama_engine.get_ai_health_status()
+            
+            ready = self.ollama_engine.is_ready()
+            
+            # Perform basic health check if ready
+            health_ok = False
+            if ready:
+                try:
+                    health_ok = await self.ollama_engine.health_check()
+                except Exception as e:
+                    self._logger.warning(f"AI health check failed: {e}")
+            
+            return {
+                "available": True,
+                "ready": ready,
+                "healthy": health_ok,
+                "overall_health": ai_health_status.get("overall_health", "UNKNOWN"),
+                "circuit_breakers": ai_health_status.get("circuit_breakers", {}),
+                "error_counts": ai_health_status.get("error_counts", {}),
+                "recent_error_rate": ai_health_status.get("recent_error_rate", 0),
+                "degradation_active": ai_health_status.get("degradation_active", False),
+                "error": None if ready and health_ok else "AI engine not ready or unhealthy"
+            }
+            
+        except Exception as e:
+            self._logger.error(f"Error getting AI status: {e}")
+            return {
+                "available": True,
+                "ready": False,
+                "healthy": False,
+                "error": f"Status check failed: {str(e)[:50]}",
+                "circuit_breakers": None,
+                "degradation_active": True
+            }
     
     async def process_ai_response_pipeline(self, content: str, user_name: str) -> MessageResponse:
         """

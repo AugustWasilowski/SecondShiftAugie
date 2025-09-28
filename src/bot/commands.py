@@ -279,47 +279,74 @@ class BotCommands:
             # Get audio storage info
             storage_info = self.audio_manager.get_storage_info()
             
-            # Get AI status information
+            # Get comprehensive AI status information
             ai_ready = False
             ai_health_ok = False
             ai_test_result = None
             ai_error = None
+            ai_health_details = None
             
             if self.ollama_engine:
                 ai_ready = self.ollama_engine.is_ready()
                 
-                if ai_ready:
-                    # Perform AI health check
-                    try:
-                        ai_health_ok = await self.ollama_engine.health_check()
-                        logger.debug(f"AI health check result: {ai_health_ok}")
-                    except Exception as health_error:
-                        logger.warning(f"AI health check failed: {health_error}")
-                        ai_error = f"Health check failed: {str(health_error)[:50]}"
+                # Get comprehensive AI health status
+                try:
+                    ai_health_details = self.ollama_engine.get_ai_health_status()
+                    overall_health = ai_health_details.get("overall_health", "UNKNOWN")
                     
-                    # Test AI response generation if healthy
-                    if ai_health_ok:
-                        try:
-                            logger.info("Testing AI response generation for status command")
-                            test_response = await self.ollama_engine.generate_response(
-                                "Hello, this is a test message for status checking.", 
-                                "Respond briefly that the test was successful."
-                            )
-                            
-                            if test_response.success:
-                                ai_test_result = "✅ Working"
-                                logger.info("AI response generation test successful")
-                            else:
-                                ai_test_result = f"⚠️ Failed"
-                                ai_error = test_response.error_message or "Unknown error"
-                                logger.warning(f"AI response test failed: {ai_error}")
-                                
-                        except Exception as test_error:
-                            ai_test_result = "❌ Error"
-                            ai_error = str(test_error)[:50]
-                            logger.error(f"AI response test error: {test_error}")
+                    if overall_health == "HEALTHY":
+                        ai_health_ok = True
+                    elif overall_health == "DEGRADED":
+                        ai_health_ok = False
+                        ai_error = "AI in degraded mode"
                     else:
-                        ai_test_result = "❌ Health check failed"
+                        ai_health_ok = False
+                        ai_error = "AI health check failed"
+                        
+                    logger.debug(f"AI comprehensive health status: {overall_health}")
+                    
+                except Exception as health_error:
+                    logger.warning(f"AI health status check failed: {health_error}")
+                    ai_error = f"Health status failed: {str(health_error)[:50]}"
+                
+                # Perform basic health check if ready
+                if ai_ready and ai_health_ok:
+                    try:
+                        basic_health = await self.ollama_engine.health_check()
+                        logger.debug(f"AI basic health check result: {basic_health}")
+                        
+                        if not basic_health:
+                            ai_health_ok = False
+                            ai_error = "Basic health check failed"
+                            
+                    except Exception as health_error:
+                        logger.warning(f"AI basic health check failed: {health_error}")
+                        ai_health_ok = False
+                        ai_error = f"Health check failed: {str(health_error)[:50]}"
+                
+                # Test AI response generation if healthy
+                if ai_ready and ai_health_ok:
+                    try:
+                        logger.info("Testing AI response generation for status command")
+                        test_response = await self.ollama_engine.generate_response(
+                            "Hello, this is a test message for status checking.", 
+                            "Respond briefly that the test was successful."
+                        )
+                        
+                        if test_response.success:
+                            ai_test_result = "✅ Working"
+                            logger.info("AI response generation test successful")
+                        else:
+                            ai_test_result = f"⚠️ Failed"
+                            ai_error = test_response.error_message or "Unknown error"
+                            logger.warning(f"AI response test failed: {ai_error}")
+                            
+                    except Exception as test_error:
+                        ai_test_result = "❌ Error"
+                        ai_error = str(test_error)[:50]
+                        logger.error(f"AI response test error: {test_error}")
+                elif ai_ready:
+                    ai_test_result = "❌ Health check failed"
                 else:
                     ai_test_result = "❌ Engine not ready"
             
@@ -355,10 +382,33 @@ class BotCommands:
                 if ai_test_result:
                     embed.add_field(name="AI Response Test", value=ai_test_result, inline=True)
                 
+                # Circuit breaker status if available
+                if ai_health_details and "circuit_breakers" in ai_health_details:
+                    cb_status = ai_health_details["circuit_breakers"]
+                    ollama_cb = cb_status.get("ollama_api", {})
+                    response_cb = cb_status.get("ai_response", {})
+                    
+                    cb_text = f"API: {ollama_cb.get('state', 'UNKNOWN')}"
+                    if ollama_cb.get('failure_count', 0) > 0:
+                        cb_text += f" ({ollama_cb['failure_count']} fails)"
+                    
+                    cb_text += f"\nResp: {response_cb.get('state', 'UNKNOWN')}"
+                    if response_cb.get('failure_count', 0) > 0:
+                        cb_text += f" ({response_cb['failure_count']} fails)"
+                    
+                    embed.add_field(name="Circuit Breakers", value=cb_text, inline=True)
+                
                 # Show AI error if any
                 if ai_error:
                     error_text = ai_error if len(ai_error) <= 50 else ai_error[:47] + "..."
                     embed.add_field(name="AI Error", value=f"⚠️ {error_text}", inline=True)
+                
+                # Show error rate if available
+                if ai_health_details and "recent_error_rate" in ai_health_details:
+                    error_rate = ai_health_details["recent_error_rate"]
+                    if error_rate > 0:
+                        embed.add_field(name="Recent Errors", value=f"⚠️ {error_rate}/hour", inline=True)
+                        
             else:
                 embed.add_field(name="AI Engine", value="❌ Not Configured", inline=True)
                 embed.add_field(name="AI Features", value="❌ Unavailable", inline=True)
@@ -402,6 +452,40 @@ class BotCommands:
                 value="\n".join(features),
                 inline=False
             )
+            
+            # Add comprehensive health monitoring information if available
+            try:
+                from src.utils.health_monitoring import health_monitoring_service
+                health_report = health_monitoring_service.get_system_health_report()
+                
+                if health_report and health_report.get("monitoring_active"):
+                    monitoring_status = "🟢 Active" if health_report["monitoring_active"] else "🔴 Inactive"
+                    embed.add_field(name="Health Monitoring", value=monitoring_status, inline=True)
+                    
+                    # Add circuit breaker information
+                    ai_health = health_report.get("ai_health", {})
+                    if ai_health and "circuit_breakers" in ai_health:
+                        cb_info = ai_health["circuit_breakers"]
+                        cb_status = []
+                        
+                        for cb_name, cb_data in cb_info.items():
+                            state = cb_data.get("state", "UNKNOWN")
+                            if state == "CLOSED":
+                                cb_status.append(f"✅ {cb_name.replace('_', ' ').title()}")
+                            elif state == "HALF_OPEN":
+                                cb_status.append(f"🟡 {cb_name.replace('_', ' ').title()}")
+                            else:
+                                cb_status.append(f"🔴 {cb_name.replace('_', ' ').title()}")
+                        
+                        if cb_status:
+                            embed.add_field(
+                                name="Circuit Breakers",
+                                value="\n".join(cb_status[:3]),  # Limit to 3 items
+                                inline=True
+                            )
+                            
+            except Exception as monitoring_error:
+                logger.debug(f"Could not get health monitoring info: {monitoring_error}")
             
             # Add helpful footer based on status
             if not all_systems_ok:
