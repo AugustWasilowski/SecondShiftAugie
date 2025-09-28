@@ -101,19 +101,19 @@ class MessageRouter:
     
     async def _handle_mention(self, message: nextcord.Message) -> MessageResponse:
         """
-        Handle messages that mention the bot.
+        Handle messages that mention the bot with integrated AI response pipeline.
         
         Implements requirements:
-        - 2.1: Play audio in voice channel when connected and response generated
-        - 2.2: Text-only response when not in voice channel
-        - 2.3: Log errors and continue with text-only on audio failure
-        - 3.3: Generate and play voice responses for @mentions when in voice channel
+        - 4.1: Update message flow to pass AI responses to VoxCPM TTS engine
+        - 4.2: Ensure proper coordination between text and audio responses
+        - 4.4: Add audio indicator when both text and voice responses are sent
+        - 4.5: Handle TTS failures gracefully with text-only fallback
         
         Args:
             message: Discord message containing bot mention
             
         Returns:
-            MessageResponse: Response with text and potential audio
+            MessageResponse: Response with text and potential audio coordination
         """
         try:
             # Extract the actual message content without the mention
@@ -128,76 +128,24 @@ class MessageRouter:
             if not content:
                 content = "Hello! How can I help you?"
             
-            # Generate a text response
-            response_text = await self._generate_response(content, message.author.display_name)
+            # Process through complete AI response pipeline (Requirements 4.1, 4.2, 4.4, 4.5)
+            self._logger.info(f"Processing mention through AI response pipeline: '{content[:50]}...'")
             
-            # Check if we should generate audio (Requirement 3.3: when in voice channel AND receives @mentions)
-            is_in_voice = self.bot_manager.is_in_voice_channel()
-            tts_ready = self.tts_engine.is_ready()
+            response = await self.process_ai_response_pipeline(content, message.author.display_name)
             
-            self._logger.info(f"Mention handling - Voice channel: {is_in_voice}, TTS ready: {tts_ready}")
+            # Log pipeline completion
+            if response.should_play_audio:
+                self._logger.info("Mention processed: AI response with audio delivered")
+            elif response.audio_response:
+                self._logger.info("Mention processed: AI response text-only (audio generation attempted)")
+            else:
+                self._logger.info("Mention processed: AI response text-only")
             
-            # Requirement 2.1: WHEN bot is connected to voice channel AND generates response 
-            # THEN system SHALL play generated audio file in voice channel
-            if is_in_voice and tts_ready:
-                try:
-                    # Generate audio for the response
-                    self._logger.info(f"Generating audio for mention response: '{response_text[:50]}...'")
-                    audio_response = await self.tts_engine.generate_speech(response_text)
-                    
-                    if audio_response.success and audio_response.audio_path:
-                        # Attempt to play audio in voice channel
-                        try:
-                            audio_played = await self.audio_manager.play_in_voice_channel(
-                                self.bot_manager, 
-                                audio_response.audio_path
-                            )
-                            
-                            if audio_played:
-                                self._logger.info("Successfully played audio response for mention")
-                                return MessageResponse(
-                                    text_response=response_text,
-                                    audio_response=audio_response,
-                                    should_play_audio=True
-                                )
-                            else:
-                                # Requirement 2.3: Log error and continue with text-only response
-                                self._logger.error("Failed to play audio in voice channel - continuing with text-only")
-                                
-                        except Exception as audio_error:
-                            # Requirement 2.3: WHEN audio playback fails THEN log error and continue with text-only
-                            self._logger.error(f"Audio playback failed for mention: {audio_error}")
-                            self._logger.info("Continuing with text-only response due to audio playback failure")
-                    
-                    else:
-                        # Audio generation failed, log and continue with text
-                        self._logger.error(f"Audio generation failed: {audio_response.error_message}")
-                        self._logger.info("Continuing with text-only response due to audio generation failure")
-                        
-                except Exception as tts_error:
-                    # Requirement 2.3: Log TTS errors and continue with text-only
-                    self._logger.error(f"TTS generation failed for mention: {tts_error}")
-                    self._logger.info("Continuing with text-only response due to TTS failure")
-            
-            elif is_in_voice and not tts_ready:
-                # In voice channel but TTS not ready
-                self._logger.warning("Bot is in voice channel but TTS engine not ready - text-only response")
-                
-            elif not is_in_voice:
-                # Requirement 2.2: WHEN bot not in voice channel AND generates response 
-                # THEN system SHALL only send text response to chat
-                self._logger.info("Bot not in voice channel - sending text-only response")
-            
-            # Return text-only response (either by design or due to fallback)
-            return MessageResponse(
-                text_response=response_text,
-                audio_response=None,
-                should_play_audio=False
-            )
+            return response
             
         except Exception as e:
             # Handle any unexpected errors in mention processing
-            self._logger.error(f"Unexpected error handling mention: {e}")
+            self._logger.error(f"Unexpected error processing mention: {e}")
             return MessageResponse(
                 text_response="Sorry, I had trouble processing your message.", 
                 should_play_audio=False
@@ -209,7 +157,6 @@ class MessageRouter:
         
         Implements requirements:
         - 1.1: Send message content to Ollama and receive AI response
-        - 1.4: Pass AI responses to existing VoxCPM TTS pipeline
         - 4.1: Generate AI responses for user messages
         - 6.3: Truncate responses appropriately for TTS
         - 6.5: Indicate when AI features are unavailable
@@ -219,30 +166,34 @@ class MessageRouter:
             user_name: Display name of the user
             
         Returns:
-            str: Generated response text
+            str: Generated response text optimized for TTS
         """
         # Try to use Ollama AI engine if available and ready
         if self.ollama_engine and self.ollama_engine.is_ready():
             try:
                 self._logger.debug(f"Generating AI response for user {user_name}: '{content[:50]}...'")
                 
-                # Add user context to the message
-                context = f"The user's name is {user_name}. Respond in a friendly, conversational manner suitable for voice synthesis."
+                # Add user context optimized for voice synthesis
+                context = (
+                    f"The user's name is {user_name}. "
+                    f"Respond in a friendly, conversational manner suitable for voice synthesis. "
+                    f"Keep responses concise and natural-sounding for text-to-speech conversion."
+                )
                 
                 # Generate AI response
                 ai_response = await self.ollama_engine.generate_response(content, context)
                 
                 if ai_response.success:
-                    # Additional validation and truncation for TTS compatibility
+                    # Validate and optimize response for TTS pipeline (Requirement 6.3)
                     validated_text, was_truncated = self._validate_and_truncate_response(ai_response.text)
                     
                     if was_truncated and not ai_response.truncated:
-                        self._logger.info("Response further truncated for TTS compatibility")
+                        self._logger.info("AI response further truncated for TTS compatibility")
                     
-                    self._logger.debug(f"AI response generated successfully (AI truncated: {ai_response.truncated}, TTS truncated: {was_truncated})")
+                    self._logger.debug(f"AI response ready for TTS pipeline (AI truncated: {ai_response.truncated}, TTS truncated: {was_truncated})")
                     return validated_text
                 else:
-                    # AI generation failed, log and fall back
+                    # AI generation failed, log and fall back (Requirement 6.5)
                     self._logger.warning(f"AI response generation failed: {ai_response.error_message}")
                     self._logger.debug("Falling back to simple response generation")
                     
@@ -252,11 +203,11 @@ class MessageRouter:
                 self._logger.debug("Falling back to simple response generation")
         
         elif self.ollama_engine and not self.ollama_engine.is_ready():
-            # AI engine exists but not ready
+            # AI engine exists but not ready (Requirement 6.5)
             self._logger.debug("Ollama engine not ready, using fallback responses")
         
         else:
-            # No AI engine configured
+            # No AI engine configured (Requirement 6.5)
             self._logger.debug("No Ollama engine configured, using simple response generation")
         
         # Fallback to simple response generation when AI is unavailable
@@ -363,6 +314,107 @@ class MessageRouter:
             "error": None if ready else "AI engine not ready"
         }
     
+    async def process_ai_response_pipeline(self, content: str, user_name: str) -> MessageResponse:
+        """
+        Process complete AI response pipeline from text generation to audio playback.
+        
+        Implements requirements:
+        - 4.1: Update message flow to pass AI responses to VoxCPM TTS engine
+        - 4.2: Ensure proper coordination between text and audio responses
+        - 4.4: Add audio indicator when both text and voice responses are sent
+        - 4.5: Handle TTS failures gracefully with text-only fallback
+        
+        Args:
+            content: User message content
+            user_name: Display name of the user
+            
+        Returns:
+            MessageResponse: Complete response with text and audio coordination
+        """
+        try:
+            # Step 1: Generate AI response text
+            response_text = await self._generate_response(content, user_name)
+            
+            # Step 2: Determine audio generation strategy
+            should_attempt_audio = self._should_generate_audio()
+            
+            if not should_attempt_audio:
+                # Text-only response - no audio generation needed
+                self._logger.debug("Audio generation not attempted - returning text-only response")
+                return MessageResponse(
+                    text_response=response_text,
+                    audio_response=None,
+                    should_play_audio=False
+                )
+            
+            # Step 3: Generate and coordinate audio response (Requirements 4.1, 4.2)
+            self._logger.info("Processing AI response through TTS pipeline")
+            
+            try:
+                # Generate TTS audio from AI response (Requirement 4.1)
+                audio_response = await self.tts_engine.generate_speech(response_text)
+                
+                if audio_response.success and audio_response.audio_path:
+                    # Step 4: Attempt audio playback (Requirement 4.2)
+                    try:
+                        audio_played = await self.audio_manager.play_in_voice_channel(
+                            self.bot_manager, 
+                            audio_response.audio_path
+                        )
+                        
+                        if audio_played:
+                            # Success: Both text and audio available (Requirement 4.4)
+                            self._logger.info("AI response pipeline successful: text + audio")
+                            return MessageResponse(
+                                text_response=response_text,
+                                audio_response=audio_response,
+                                should_play_audio=True
+                            )
+                        else:
+                            # Audio generation succeeded but playback failed (Requirement 4.5)
+                            self._logger.warning("Audio generated but playback failed - text-only fallback")
+                            return MessageResponse(
+                                text_response=response_text,
+                                audio_response=audio_response,  # Include for failure indicator
+                                should_play_audio=False
+                            )
+                            
+                    except Exception as playback_error:
+                        # Audio playback error (Requirement 4.5)
+                        self._logger.error(f"Audio playback error in pipeline: {playback_error}")
+                        return MessageResponse(
+                            text_response=response_text,
+                            audio_response=audio_response,  # Include for failure indicator
+                            should_play_audio=False
+                        )
+                
+                else:
+                    # TTS generation failed (Requirement 4.5)
+                    self._logger.warning(f"TTS generation failed in pipeline: {audio_response.error_message if audio_response else 'Unknown error'}")
+                    return MessageResponse(
+                        text_response=response_text,
+                        audio_response=audio_response,  # Include for failure indicator
+                        should_play_audio=False
+                    )
+                    
+            except Exception as tts_error:
+                # TTS engine error (Requirement 4.5)
+                self._logger.error(f"TTS engine error in pipeline: {tts_error}")
+                return MessageResponse(
+                    text_response=response_text,
+                    audio_response=None,
+                    should_play_audio=False
+                )
+        
+        except Exception as e:
+            # Pipeline error - return basic fallback
+            self._logger.error(f"AI response pipeline error: {e}")
+            return MessageResponse(
+                text_response="Sorry, I encountered an error processing your message.",
+                audio_response=None,
+                should_play_audio=False
+            )
+    
     def _validate_and_truncate_response(self, response_text: str, max_length: int = 500) -> tuple[str, bool]:
         """
         Validate and truncate response text for TTS compatibility.
@@ -379,13 +431,16 @@ class MessageRouter:
         if not response_text:
             return "I'm sorry, I couldn't generate a response.", False
         
-        # Remove excessive whitespace and newlines
+        # Remove excessive whitespace and newlines for better TTS
         cleaned_text = " ".join(response_text.split())
+        
+        # Remove problematic characters for TTS
+        cleaned_text = cleaned_text.replace('\n', ' ').replace('\t', ' ')
         
         if len(cleaned_text) <= max_length:
             return cleaned_text, False
         
-        # Truncate at sentence boundary if possible
+        # Truncate at sentence boundary if possible (better for TTS)
         sentences = cleaned_text.split('. ')
         truncated = ""
         
@@ -397,7 +452,7 @@ class MessageRouter:
         
         if truncated:
             result = truncated.rstrip() + "..."
-            self._logger.info(f"Response truncated at sentence boundary: {len(cleaned_text)} -> {len(result)} chars")
+            self._logger.info(f"Response truncated at sentence boundary for TTS: {len(cleaned_text)} -> {len(result)} chars")
             return result, True
         
         # If no complete sentences fit, truncate at word boundary
@@ -411,7 +466,7 @@ class MessageRouter:
                 break
         
         result = truncated.rstrip() + "..."
-        self._logger.info(f"Response truncated at word boundary: {len(cleaned_text)} -> {len(result)} chars")
+        self._logger.info(f"Response truncated at word boundary for TTS: {len(cleaned_text)} -> {len(result)} chars")
         return result, True
     
     async def handle_command(self, ctx: commands.Context, command_name: str, *args) -> CommandResponse:
@@ -655,3 +710,53 @@ class MessageRouter:
                 audio_generated=False,
                 audio_played=False
             )
+    
+    async def get_pipeline_status(self) -> dict:
+        """
+        Get comprehensive status of the AI response pipeline.
+        
+        Returns:
+            dict: Pipeline status including all components
+        """
+        try:
+            # Get AI status
+            ai_status = await self.get_ai_status()
+            
+            # Get TTS status
+            tts_status = {
+                "ready": self.tts_engine.is_ready(),
+                "available": self.tts_engine is not None
+            }
+            
+            # Get voice channel status
+            voice_status = {
+                "connected": self.bot_manager.is_in_voice_channel(),
+                "info": self.bot_manager.get_voice_channel_info() if self.bot_manager.is_in_voice_channel() else None
+            }
+            
+            # Get audio manager status
+            audio_status = self.audio_manager.get_storage_info()
+            
+            # Determine pipeline capabilities
+            can_generate_text = ai_status.get("ready", False) or True  # Fallback always available
+            can_generate_audio = tts_status["ready"] and voice_status["connected"]
+            
+            return {
+                "ai": ai_status,
+                "tts": tts_status,
+                "voice": voice_status,
+                "audio": audio_status,
+                "capabilities": {
+                    "text_responses": can_generate_text,
+                    "audio_responses": can_generate_audio,
+                    "ai_powered": ai_status.get("ready", False)
+                },
+                "pipeline_ready": can_generate_text  # Pipeline is ready if we can at least generate text
+            }
+            
+        except Exception as e:
+            self._logger.error(f"Error getting pipeline status: {e}")
+            return {
+                "error": str(e),
+                "pipeline_ready": False
+            }

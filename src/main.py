@@ -394,13 +394,24 @@ class SecondShiftAugieBot:
                     try:
                         response = await self.message_router.route_message(message)
                         
-                        # Send text response if available
+                        # Send text response with proper audio coordination (Requirement 4.4)
                         if response.text_response:
                             try:
-                                # Add audio status indicator to text response if audio was played
+                                # Prepare text response with audio indicator (Requirement 4.4)
                                 text_to_send = response.text_response
+                                
+                                # Add audio indicator when both text and voice responses are sent (Requirement 4.4)
                                 if response.should_play_audio and response.audio_response and response.audio_response.success:
-                                    text_to_send += " 🎤"  # Indicate audio was played
+                                    text_to_send += " 🎤"  # Indicate audio was successfully played
+                                    logger.debug("Added audio success indicator to text response")
+                                elif response.audio_response and not response.audio_response.success:
+                                    # TTS generation attempted but failed - add failure indicator (Requirement 4.5)
+                                    text_to_send += " ⚠️"  # Indicate audio generation failed
+                                    logger.debug("Added audio failure indicator to text response")
+                                elif self.bot_manager.is_in_voice_channel() and not self.tts_engine.is_ready():
+                                    # In voice channel but TTS not ready
+                                    text_to_send += " 🔇"  # Indicate TTS unavailable
+                                    logger.debug("Added TTS unavailable indicator to text response")
                                 
                                 await message.reply(text_to_send, mention_author=True)
                                 
