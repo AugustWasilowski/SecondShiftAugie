@@ -1,8 +1,9 @@
 """
-Message Router for VoxCPM TTS Integration
+Message Router for VoxCPM TTS Integration with Ollama AI
 
 Handles routing of Discord messages and mentions, determines when to generate
 voice responses, and coordinates between text responses and audio generation.
+Integrates with Ollama AI engine for intelligent response generation.
 """
 
 import asyncio
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from ..tts.voxcpm_engine import VoxCPMEngine
     from ..audio.audio_manager import AudioManager
     from .discord_manager import DiscordBotManager
+    from ..ai.ollama_engine import OllamaEngine
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +49,9 @@ class ChatResponse:
 
 
 class MessageRouter:
-    """Routes Discord messages and coordinates text/voice responses."""
+    """Routes Discord messages and coordinates text/voice responses with AI integration."""
     
-    def __init__(self, tts_engine: "VoxCPMEngine", audio_manager: "AudioManager", bot_manager: "DiscordBotManager"):
+    def __init__(self, tts_engine: "VoxCPMEngine", audio_manager: "AudioManager", bot_manager: "DiscordBotManager", ollama_engine: Optional["OllamaEngine"] = None):
         """
         Initialize the message router.
         
@@ -57,10 +59,12 @@ class MessageRouter:
             tts_engine: VoxCPM TTS engine for audio generation
             audio_manager: Audio manager for file operations
             bot_manager: Discord bot manager for voice operations
+            ollama_engine: Optional Ollama AI engine for intelligent responses
         """
         self.tts_engine = tts_engine
         self.audio_manager = audio_manager
         self.bot_manager = bot_manager
+        self.ollama_engine = ollama_engine
         self._logger = logging.getLogger(__name__)
     
     async def route_message(self, message: nextcord.Message) -> MessageResponse:
@@ -201,7 +205,14 @@ class MessageRouter:
     
     async def _generate_response(self, content: str, user_name: str) -> str:
         """
-        Generate a text response to user input.
+        Generate a text response to user input using AI when available.
+        
+        Implements requirements:
+        - 1.1: Send message content to Ollama and receive AI response
+        - 1.4: Pass AI responses to existing VoxCPM TTS pipeline
+        - 4.1: Generate AI responses for user messages
+        - 6.3: Truncate responses appropriately for TTS
+        - 6.5: Indicate when AI features are unavailable
         
         Args:
             content: User message content
@@ -210,7 +221,58 @@ class MessageRouter:
         Returns:
             str: Generated response text
         """
-        # Simple response generation (in a real implementation, this would use AI/LLM)
+        # Try to use Ollama AI engine if available and ready
+        if self.ollama_engine and self.ollama_engine.is_ready():
+            try:
+                self._logger.debug(f"Generating AI response for user {user_name}: '{content[:50]}...'")
+                
+                # Add user context to the message
+                context = f"The user's name is {user_name}. Respond in a friendly, conversational manner suitable for voice synthesis."
+                
+                # Generate AI response
+                ai_response = await self.ollama_engine.generate_response(content, context)
+                
+                if ai_response.success:
+                    # Additional validation and truncation for TTS compatibility
+                    validated_text, was_truncated = self._validate_and_truncate_response(ai_response.text)
+                    
+                    if was_truncated and not ai_response.truncated:
+                        self._logger.info("Response further truncated for TTS compatibility")
+                    
+                    self._logger.debug(f"AI response generated successfully (AI truncated: {ai_response.truncated}, TTS truncated: {was_truncated})")
+                    return validated_text
+                else:
+                    # AI generation failed, log and fall back
+                    self._logger.warning(f"AI response generation failed: {ai_response.error_message}")
+                    self._logger.debug("Falling back to simple response generation")
+                    
+            except Exception as e:
+                # Unexpected error in AI generation
+                self._logger.error(f"Unexpected error in AI response generation: {e}")
+                self._logger.debug("Falling back to simple response generation")
+        
+        elif self.ollama_engine and not self.ollama_engine.is_ready():
+            # AI engine exists but not ready
+            self._logger.debug("Ollama engine not ready, using fallback responses")
+        
+        else:
+            # No AI engine configured
+            self._logger.debug("No Ollama engine configured, using simple response generation")
+        
+        # Fallback to simple response generation when AI is unavailable
+        return self._generate_fallback_response(content, user_name)
+    
+    def _generate_fallback_response(self, content: str, user_name: str) -> str:
+        """
+        Generate a simple fallback response when AI is unavailable.
+        
+        Args:
+            content: User message content
+            user_name: Display name of the user
+            
+        Returns:
+            str: Generated fallback response text
+        """
         content_lower = content.lower()
         
         if any(greeting in content_lower for greeting in ["hello", "hi", "hey", "greetings"]):
@@ -260,6 +322,97 @@ class MessageRouter:
         # 2. Bot is in a voice channel (Requirement 2.1)
         return (self.tts_engine.is_ready() and 
                 self.bot_manager.is_in_voice_channel())
+    
+    def is_ai_available(self) -> bool:
+        """
+        Check if AI functionality is available.
+        
+        Returns:
+            bool: True if AI is available and ready, False otherwise
+        """
+        return self.ollama_engine is not None and self.ollama_engine.is_ready()
+    
+    async def get_ai_status(self) -> dict:
+        """
+        Get detailed AI status information.
+        
+        Returns:
+            dict: AI status information including availability and health
+        """
+        if not self.ollama_engine:
+            return {
+                "available": False,
+                "ready": False,
+                "error": "AI engine not configured"
+            }
+        
+        ready = self.ollama_engine.is_ready()
+        
+        # Perform health check if ready
+        health_ok = False
+        if ready:
+            try:
+                health_ok = await self.ollama_engine.health_check()
+            except Exception as e:
+                self._logger.warning(f"AI health check failed: {e}")
+        
+        return {
+            "available": True,
+            "ready": ready,
+            "healthy": health_ok,
+            "error": None if ready else "AI engine not ready"
+        }
+    
+    def _validate_and_truncate_response(self, response_text: str, max_length: int = 500) -> tuple[str, bool]:
+        """
+        Validate and truncate response text for TTS compatibility.
+        
+        Implements requirement 6.3: Truncate AI responses appropriately for TTS
+        
+        Args:
+            response_text: Original response text
+            max_length: Maximum allowed length for TTS
+            
+        Returns:
+            tuple[str, bool]: (processed_text, was_truncated)
+        """
+        if not response_text:
+            return "I'm sorry, I couldn't generate a response.", False
+        
+        # Remove excessive whitespace and newlines
+        cleaned_text = " ".join(response_text.split())
+        
+        if len(cleaned_text) <= max_length:
+            return cleaned_text, False
+        
+        # Truncate at sentence boundary if possible
+        sentences = cleaned_text.split('. ')
+        truncated = ""
+        
+        for sentence in sentences:
+            if len(truncated + sentence + '. ') <= max_length - 3:  # Leave room for "..."
+                truncated += sentence + '. '
+            else:
+                break
+        
+        if truncated:
+            result = truncated.rstrip() + "..."
+            self._logger.info(f"Response truncated at sentence boundary: {len(cleaned_text)} -> {len(result)} chars")
+            return result, True
+        
+        # If no complete sentences fit, truncate at word boundary
+        words = cleaned_text.split()
+        truncated = ""
+        
+        for word in words:
+            if len(truncated + word + " ") <= max_length - 3:
+                truncated += word + " "
+            else:
+                break
+        
+        result = truncated.rstrip() + "..."
+        self._logger.info(f"Response truncated at word boundary: {len(cleaned_text)} -> {len(result)} chars")
+        return result, True
     
     async def handle_command(self, ctx: commands.Context, command_name: str, *args) -> CommandResponse:
         """
@@ -386,6 +539,9 @@ class MessageRouter:
     
     async def _handle_help_command(self, ctx: commands.Context) -> CommandResponse:
         """Handle !help command to show available commands."""
+        # Check if AI is available to customize help message
+        ai_available = self.ollama_engine and self.ollama_engine.is_ready()
+        
         help_text = """
 **SecondShiftAugie Commands:**
 
@@ -394,11 +550,17 @@ class MessageRouter:
 `!help` - Show this help message
 `!status` - Show bot status and capabilities
 
-**Voice Features:**
-- Mention me (@SecondShiftAugie) to get voice responses when I'm in a voice channel
+**Voice & AI Features:**
+- Mention me (@SecondShiftAugie) to get intelligent AI responses
 - I use VoxCPM TTS to generate speech with a consistent voice
-- Audio is automatically played when I'm connected to voice
-        """.strip()
+- Audio is automatically played when I'm connected to voice"""
+        
+        if ai_available:
+            help_text += "\n- AI-powered conversations using Ollama with Qwen2.5 model"
+        else:
+            help_text += "\n- AI features currently unavailable (using simple responses)"
+        
+        help_text = help_text.strip()
         
         return CommandResponse(
             success=True,
@@ -406,7 +568,14 @@ class MessageRouter:
         )
     
     async def _handle_status_command(self, ctx: commands.Context) -> CommandResponse:
-        """Handle !status command to show bot status."""
+        """
+        Handle !status command to show bot status including AI capabilities.
+        
+        Implements requirements:
+        - 3.5: Show bot status including AI capabilities
+        - 6.4: Include AI status in health reporting
+        - 6.5: Indicate when AI features are unavailable
+        """
         try:
             # Gather status information
             tts_ready = self.tts_engine.is_ready()
@@ -419,6 +588,26 @@ class MessageRouter:
                 f"🎤 TTS Engine: {'✅ Ready' if tts_ready else '❌ Not Ready'}",
                 f"🔊 Voice Channel: {'✅ Connected' if in_voice else '❌ Not Connected'}"
             ]
+            
+            # Add AI status information
+            if self.ollama_engine:
+                ai_ready = self.ollama_engine.is_ready()
+                status_parts.append(f"🤖 AI Engine: {'✅ Ready' if ai_ready else '❌ Not Ready'}")
+                
+                # Test AI response generation if ready
+                if ai_ready:
+                    try:
+                        test_response = await self.ollama_engine.generate_response("Hello", None)
+                        if test_response.success:
+                            status_parts.append(f"🧠 AI Response Test: ✅ Working")
+                        else:
+                            status_parts.append(f"🧠 AI Response Test: ⚠️ Failed ({test_response.error_message})")
+                    except Exception as ai_error:
+                        status_parts.append(f"🧠 AI Response Test: ❌ Error ({str(ai_error)[:50]})")
+                else:
+                    status_parts.append(f"🧠 AI Response Test: ❌ Engine Not Ready")
+            else:
+                status_parts.append(f"🤖 AI Engine: ❌ Not Configured")
             
             if voice_info:
                 status_parts.append(f"📍 Current Channel: {voice_info['name']} ({voice_info['member_count']} members)")
