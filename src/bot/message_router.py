@@ -86,12 +86,15 @@ class MessageRouter:
             
             # All commands are now slash commands - no need to check for prefix commands
             
-            # Check if bot is mentioned in the message
+            # Check if bot is mentioned in the message OR if it's a direct message
             bot_user = self.bot_manager.get_bot_user()
-            if bot_user and bot_user in message.mentions:
+            is_mentioned = bot_user and bot_user in message.mentions
+            is_dm = isinstance(message.channel, nextcord.DMChannel)
+            
+            if is_mentioned or is_dm:
                 return await self._handle_mention(message)
             
-            # For non-mention messages, no response needed
+            # For non-mention messages in guilds, no response needed
             return MessageResponse("", should_play_audio=False)
             
         except Exception as e:
@@ -100,7 +103,7 @@ class MessageRouter:
     
     async def _handle_mention(self, message: nextcord.Message) -> MessageResponse:
         """
-        Handle messages that mention the bot with integrated AI response pipeline.
+        Handle messages that mention the bot or direct messages with integrated AI response pipeline.
         
         Implements requirements:
         - 4.1: Update message flow to pass AI responses to VoxCPM TTS engine
@@ -109,7 +112,7 @@ class MessageRouter:
         - 4.5: Handle TTS failures gracefully with text-only fallback
         
         Args:
-            message: Discord message containing bot mention
+            message: Discord message containing bot mention or direct message
             
         Returns:
             MessageResponse: Response with text and potential audio coordination
@@ -118,8 +121,10 @@ class MessageRouter:
             # Extract the actual message content without the mention
             content = message.content
             bot_user = self.bot_manager.get_bot_user()
+            is_dm = isinstance(message.channel, nextcord.DMChannel)
             
-            if bot_user:
+            # Only remove mentions if this is not a DM (DMs don't have mentions)
+            if bot_user and not is_dm:
                 # Remove bot mention from content
                 content = content.replace(f"<@{bot_user.id}>", "").strip()
                 content = content.replace(f"<@!{bot_user.id}>", "").strip()
@@ -128,23 +133,24 @@ class MessageRouter:
                 content = "Hello! How can I help you?"
             
             # Process through complete AI response pipeline (Requirements 4.1, 4.2, 4.4, 4.5)
-            self._logger.info(f"Processing mention through AI response pipeline: '{content[:50]}...'")
+            message_type = "DM" if is_dm else "mention"
+            self._logger.info(f"Processing {message_type} through AI response pipeline: '{content[:50]}...'")
             
             response = await self.process_ai_response_pipeline(content, message.author.display_name)
             
             # Log pipeline completion
             if response.should_play_audio:
-                self._logger.info("Mention processed: AI response with audio delivered")
+                self._logger.info(f"{message_type.capitalize()} processed: AI response with audio delivered")
             elif response.audio_response:
-                self._logger.info("Mention processed: AI response text-only (audio generation attempted)")
+                self._logger.info(f"{message_type.capitalize()} processed: AI response text-only (audio generation attempted)")
             else:
-                self._logger.info("Mention processed: AI response text-only")
+                self._logger.info(f"{message_type.capitalize()} processed: AI response text-only")
             
             return response
             
         except Exception as e:
             # Handle any unexpected errors in mention processing
-            self._logger.error(f"Unexpected error processing mention: {e}")
+            self._logger.error(f"Unexpected error processing message: {e}")
             return MessageResponse(
                 text_response="Sorry, I had trouble processing your message.", 
                 should_play_audio=False

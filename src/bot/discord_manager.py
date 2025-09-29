@@ -43,12 +43,6 @@ class DiscordBotManager:
         """Set up Discord bot event handlers."""
         
         @self.bot.event
-        async def on_ready():
-            """Handle bot ready event."""
-            self._ready = True
-            self._logger.info(f"Bot logged in as {self.bot.user}")
-            
-        @self.bot.event
         async def on_voice_state_update(member, before, after):
             """Handle voice state updates."""
             # Log voice state changes for debugging
@@ -86,7 +80,22 @@ class DiscordBotManager:
         Returns:
             bool: True if bot is ready, False otherwise
         """
-        return self._ready and self.bot is not None
+        # Debug logging to identify what's not ready
+        ready_checks = {
+            "internal_ready": self._ready,
+            "bot_exists": self.bot is not None,
+            "bot_ready": self.bot.is_ready() if self.bot else False,
+            "bot_not_closed": not self.bot.is_closed() if self.bot else False
+        }
+        
+        all_ready = all(ready_checks.values())
+        
+        if not all_ready:
+            failed_checks = [k for k, v in ready_checks.items() if not v]
+            self._logger.warning(f"Bot not ready - Failed checks: {failed_checks}")
+            self._logger.debug(f"Ready status details: {ready_checks}")
+        
+        return all_ready
     
     def is_in_voice_channel(self) -> bool:
         """Check if the bot is currently in a voice channel.

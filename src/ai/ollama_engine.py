@@ -98,10 +98,8 @@ class OllamaEngine:
             
             # Check if model is available
             if not await self._check_model_availability():
-                logger.warning(f"Model {self.config.model_name} not available, attempting to pull...")
-                if not await self._pull_model():
-                    logger.error(f"Failed to pull model {self.config.model_name}")
-                    return False
+                logger.error(f"Model {self.config.model_name} not available. Please ensure the model is pulled manually using: ollama pull {self.config.model_name}")
+                return False
             
             self._is_ready = True
             self._consecutive_failures = 0
@@ -338,7 +336,7 @@ class OllamaEngine:
             
             # Try a simple generation request with circuit breaker protection
             try:
-                test_response = await self._make_ollama_request_with_circuit_breaker("Hello", timeout=10.0)
+                test_response = await self._make_ollama_request_with_circuit_breaker("Hello", timeout=60.0)
                 
                 if test_response and test_response.get('response'):
                     self._is_ready = True
@@ -480,54 +478,7 @@ class OllamaEngine:
             logger.error(f"Error checking model availability: {e}")
             return False
     
-    async def _pull_model(self) -> bool:
-        """
-        Attempt to pull the specified model from Ollama.
-        
-        Returns:
-            bool: True if model pulled successfully, False otherwise
-        """
-        try:
-            if not self._session:
-                return False
-            
-            logger.info(f"Attempting to pull model: {self.config.model_name}")
-            
-            pull_data = {"name": self.config.model_name}
-            
-            # Use a longer timeout for model pulling
-            pull_timeout = aiohttp.ClientTimeout(total=300)  # 5 minutes
-            
-            async with self._session.post(
-                f"{self.config.base_url}/api/pull",
-                json=pull_data,
-                timeout=pull_timeout
-            ) as response:
-                
-                if response.status == 200:
-                    # Stream the response to monitor progress
-                    async for line in response.content:
-                        if line:
-                            try:
-                                progress = json.loads(line.decode())
-                                if progress.get('status') == 'success':
-                                    logger.info(f"Successfully pulled model: {self.config.model_name}")
-                                    return True
-                                elif 'error' in progress:
-                                    logger.error(f"Error pulling model: {progress['error']}")
-                                    return False
-                            except json.JSONDecodeError:
-                                continue
-                    
-                    # If we get here, check if model is now available
-                    return await self._check_model_availability()
-                else:
-                    logger.error(f"Failed to pull model: HTTP {response.status}")
-                    return False
-                    
-        except Exception as e:
-            logger.error(f"Error pulling model: {e}")
-            return False
+
     
     @ai_error_handler.ollama_circuit_breaker
     async def _make_ollama_request_with_circuit_breaker(self, prompt: str, timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:

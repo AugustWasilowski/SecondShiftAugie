@@ -28,7 +28,8 @@ class BotCommands:
         bot_manager: "DiscordBotManager", 
         tts_engine: "VoxCPMEngine", 
         audio_manager: "AudioManager",
-        ollama_engine: Optional["OllamaEngine"] = None
+        ollama_engine: Optional["OllamaEngine"] = None,
+        main_app=None
     ):
         """Initialize command system.
         
@@ -37,11 +38,13 @@ class BotCommands:
             tts_engine: VoxCPM TTS engine instance
             audio_manager: Audio file manager instance
             ollama_engine: Optional Ollama AI engine for intelligent responses
+            main_app: Reference to main SecondShiftAugieBot application for reboot functionality
         """
         self.bot_manager = bot_manager
         self.tts_engine = tts_engine
         self.audio_manager = audio_manager
         self.ollama_engine = ollama_engine
+        self._main_app = main_app
         
         logger.info("BotCommands initialized")
     

@@ -57,6 +57,7 @@ class SlashCommandHandler:
             self._register_play_command()
             self._register_health_command()
             self._register_help_command()
+            self._register_reboot_command()
             
             self._commands_registered = True
             logger.info("All slash commands registered successfully")
@@ -129,6 +130,16 @@ class SlashCommandHandler:
         async def help_slash(interaction: nextcord.Interaction):
             """Handle /help slash command."""
             await self.handle_help(interaction)
+    
+    def _register_reboot_command(self) -> None:
+        """Register the /reboot slash command for soft restart of AI components."""
+        @self.bot.slash_command(
+            name="reboot",
+            description="Soft restart AI and TTS components without disconnecting from Discord"
+        )
+        async def reboot_slash(interaction: nextcord.Interaction):
+            """Handle /reboot slash command."""
+            await self.handle_reboot(interaction)
     
     async def handle_join(self, interaction: nextcord.Interaction) -> None:
         """Handle /join slash command interaction.
@@ -329,10 +340,11 @@ class SlashCommandHandler:
             )
             
             embed.add_field(
-                name="ℹ️ Information Commands",
+                name="ℹ️ System Commands",
                 value=(
                     "`/help` - Show this help message\n"
-                    "`/health` - Check detailed bot and system status"
+                    "`/health` - Check detailed bot and system status\n"
+                    "`/reboot` - Soft restart AI and TTS components"
                 ),
                 inline=False
             )
@@ -386,7 +398,8 @@ class SlashCommandHandler:
                         "👋 `/leave` - Leave voice channel\n"
                         "🤖 Mention me for intelligent AI conversations!\n"
                         "ℹ️ `/help` - Show this message\n"
-                        "📊 `/health` - Check bot status"
+                        "📊 `/health` - Check bot status\n"
+                        "🔄 `/reboot` - Restart AI/TTS components"
                     )
                 else:
                     help_text = (
@@ -396,7 +409,8 @@ class SlashCommandHandler:
                         "👋 `/leave` - Leave voice channel\n"
                         "💬 Mention me for voice responses! (AI currently unavailable)\n"
                         "ℹ️ `/help` - Show this message\n"
-                        "📊 `/health` - Check bot status"
+                        "📊 `/health` - Check bot status\n"
+                        "🔄 `/reboot` - Restart AI/TTS components"
                     )
                 
                 if not interaction.response.is_done():
@@ -406,6 +420,94 @@ class SlashCommandHandler:
                     
             except Exception as followup_error:
                 logger.error(f"Error sending fallback help response: {followup_error}")
+    
+    async def handle_reboot(self, interaction: nextcord.Interaction) -> None:
+        """Handle /reboot slash command for soft restart of AI components.
+        
+        Args:
+            interaction: Discord slash command interaction
+        """
+        try:
+            # Send initial "BRB" message
+            await interaction.response.send_message("🔄 BRB, rebooting AI and TTS components...")
+            
+            # Get reference to the main bot app through the bot_commands
+            main_app = getattr(self.bot_commands, '_main_app', None)
+            if not main_app:
+                await interaction.followup.send("❌ Cannot access main application for reboot")
+                return
+            
+            # Perform soft reboot
+            reboot_success = await self._perform_soft_reboot(main_app)
+            
+            if reboot_success:
+                await interaction.followup.send("✅ Back online! AI and TTS components restarted successfully.")
+            else:
+                await interaction.followup.send("⚠️ Reboot completed with some issues. Check `/health` for details.")
+                
+        except Exception as e:
+            logger.error(f"Error in /reboot slash command: {e}")
+            try:
+                await interaction.followup.send(
+                    f"❌ Reboot failed: {str(e)}",
+                    ephemeral=True
+                )
+            except Exception as followup_error:
+                logger.error(f"Error sending reboot error response: {followup_error}")
+    
+    async def _perform_soft_reboot(self, main_app) -> bool:
+        """Perform the actual soft reboot of AI and TTS components.
+        
+        Args:
+            main_app: Reference to the main SecondShiftAugieBot application
+            
+        Returns:
+            bool: True if reboot was successful, False otherwise
+        """
+        try:
+            logger.info("Starting soft reboot of AI and TTS components...")
+            
+            # Cleanup existing components
+            if main_app.ollama_engine:
+                await main_app.ollama_engine.cleanup()
+                logger.info("Ollama engine cleaned up")
+            
+            if main_app.tts_engine:
+                await main_app.tts_engine.cleanup()
+                logger.info("TTS engine cleaned up")
+            
+            # Reinitialize Ollama engine
+            if main_app.ollama_config:
+                from src.ai.ollama_engine import OllamaEngine
+                main_app.ollama_engine = OllamaEngine(main_app.ollama_config, main_app.system_prompt_manager)
+                
+                ollama_success = await main_app.ollama_engine.initialize()
+                if ollama_success:
+                    logger.info("Ollama engine reinitialized successfully")
+                else:
+                    logger.warning("Ollama engine failed to reinitialize")
+            
+            # Reinitialize TTS engine
+            if main_app.tts_config:
+                from src.tts.voxcpm_engine import VoxCPMEngine
+                main_app.tts_engine = VoxCPMEngine(main_app.tts_config)
+                
+                tts_success = await main_app.tts_engine.initialize()
+                if tts_success:
+                    logger.info("TTS engine reinitialized successfully")
+                else:
+                    logger.warning("TTS engine failed to reinitialize")
+            
+            # Update bot_commands references
+            self.bot_commands.ollama_engine = main_app.ollama_engine
+            self.bot_commands.tts_engine = main_app.tts_engine
+            
+            logger.info("Soft reboot completed")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during soft reboot: {e}")
+            return False
 
 
 class MockContext:

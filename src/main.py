@@ -207,8 +207,6 @@ class SecondShiftAugieBot:
         """
         Load configuration using the new configuration system.
         
-        Requirements 4.2, 4.3, 5.4: Comprehensive configuration loading with validation.
-        
         Returns:
             bool: True if configuration loaded successfully, False otherwise
         """
@@ -240,10 +238,7 @@ class SecondShiftAugieBot:
     def validate_startup_requirements(self) -> bool:
         """
         Validate startup requirements using the new validation system.
-        
-        Requirements 4.2, 4.3, 5.4: Comprehensive startup validation including reference files
-        and VoxCPM model accessibility.
-        
+         
         Returns:
             bool: True if critical requirements are met, False otherwise
         """
@@ -411,7 +406,8 @@ class SecondShiftAugieBot:
                     self.bot_manager,
                     self.tts_engine,
                     self.audio_manager,
-                    self.ollama_engine  # Add AI engine to commands
+                    self.ollama_engine,  # Add AI engine to commands
+                    self  # Add main app reference for reboot functionality
                 )
                 health_monitor.update_component_state("command_system", ComponentState.HEALTHY)
                 log_component_recovery("command_system", "initialization")
@@ -495,6 +491,11 @@ class SecondShiftAugieBot:
                 # Update component health status
                 health_monitor.update_component_state("discord_connection", ComponentState.HEALTHY)
                 log_component_recovery("discord_connection", "bot_ready")
+                
+                # Notify discord_manager that bot is ready
+                if self.bot_manager:
+                    self.bot_manager._ready = True
+                    logger.info("Discord manager marked as ready")
                 
                 # Set bot status with comprehensive error handling
                 try:
@@ -622,6 +623,11 @@ class SecondShiftAugieBot:
                 # Update component health status
                 health_monitor.update_component_state("discord_connection", ComponentState.FAILED, "Bot disconnected")
                 log_component_error("discord_connection", "disconnect", Exception("Bot disconnected"), ErrorSeverity.HIGH)
+                
+                # Notify discord_manager that bot is no longer ready
+                if self.bot_manager:
+                    self.bot_manager._ready = False
+                    logger.info("Discord manager marked as not ready due to disconnect")
                 
                 # Check if this is an unexpected disconnect
                 if not self._shutdown_requested:

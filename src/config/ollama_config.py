@@ -18,8 +18,8 @@ class OllamaConfig:
     """Configuration for Ollama AI engine integration."""
     
     base_url: str = "http://localhost:11434"
-    model_name: str = "qwen2.5:1.7b"
-    timeout: float = 30.0
+    model_name: str = "qwen3:1.7b"
+    timeout: float = 60.0
     max_retries: int = 3
     retry_delay: float = 1.0
     max_response_length: int = 500

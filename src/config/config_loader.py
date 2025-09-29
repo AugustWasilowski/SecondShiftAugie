@@ -79,7 +79,7 @@ class ConfigLoader:
         'VOXCPM_MAX_LENGTH': (4096, int),
         'AUDIO_CLEANUP_HOURS': (24, int),
         'OLLAMA_BASE_URL': ('http://localhost:11434', str),
-        'OLLAMA_MODEL': ('qwen2.5:1.7b', str),
+        'OLLAMA_MODEL': ('qwen3:1.7b', str),
         'OLLAMA_TIMEOUT': (30.0, float),
         'OLLAMA_MAX_RETRIES': (3, int),
         'OLLAMA_RETRY_DELAY': (1.0, float),
@@ -354,7 +354,7 @@ class ConfigLoader:
         try:
             # Load Ollama configuration with defaults
             base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
-            model_name = os.getenv('OLLAMA_MODEL', 'qwen2.5:1.7b')
+            model_name = os.getenv('OLLAMA_MODEL', 'qwen3:1.7b')
             system_prompt_file = os.getenv('SYSTEM_PROMPT_FILE', 'ollama_system_prompt.json')
             
             # Parse numeric values with validation
