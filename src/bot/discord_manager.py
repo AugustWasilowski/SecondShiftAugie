@@ -337,10 +337,9 @@ class DiscordBotManager:
             
             # Create audio source with error handling
             try:
-                # Use FFmpeg options for better compatibility and error handling
+                # Use FFmpeg options appropriate for local audio files
                 ffmpeg_options = {
-                    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-                    'options': '-vn -filter:a "volume=0.8"'  # Normalize volume
+                    'options': '-vn -filter:a "volume=0.8"'  # Normalize volume, no video
                 }
                 
                 audio_source = nextcord.FFmpegPCMAudio(

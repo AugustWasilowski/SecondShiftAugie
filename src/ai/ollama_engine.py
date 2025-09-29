@@ -233,7 +233,10 @@ class OllamaEngine:
                 response = await self._make_ollama_request_with_circuit_breaker(full_prompt)
                 
                 if response and response.get('response'):
-                    response_text = response['response'].strip()
+                    raw_response = response['response'].strip()
+                    
+                    # Clean the response to remove <think> tags and internal reasoning
+                    response_text = self._clean_response_text(raw_response)
                     
                     # Validate and truncate response if needed
                     truncated = False
@@ -754,6 +757,35 @@ class OllamaEngine:
             "degradation_active": not degradation_manager.is_feature_available("ai_responses")
         }
     
+    def _clean_response_text(self, raw_response: str) -> str:
+        """
+        Clean the response text by removing <think> tags and internal reasoning.
+        
+        Args:
+            raw_response: Raw response text from Ollama that may contain <think> tags
+            
+        Returns:
+            str: Cleaned response text with <think> content removed
+        """
+        import re
+        
+        if not raw_response:
+            return ""
+        
+        # Remove <think> tags and their content using regex
+        # This pattern matches <think> opening tag, any content (including newlines), and closing </think> tag
+        cleaned_text = re.sub(r'<think>.*?</think>', '', raw_response, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Clean up extra whitespace and newlines
+        cleaned_text = ' '.join(cleaned_text.split())
+        
+        # If the cleaned text is empty or too short, return a fallback
+        if not cleaned_text or len(cleaned_text.strip()) < 3:
+            logger.warning("Response was empty after cleaning <think> tags, using fallback")
+            return "I understand. How can I help you?"
+        
+        return cleaned_text.strip()
+
     def reset_error_state(self):
         """
         Reset error state and circuit breakers for manual recovery.

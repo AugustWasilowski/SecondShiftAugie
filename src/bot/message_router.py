@@ -391,6 +391,9 @@ class MessageRouter:
                 audio_response = await self.tts_engine.generate_speech(response_text)
                 
                 if audio_response.success and audio_response.audio_path:
+                    # Update AudioManager's last audio path for replay functionality
+                    self.audio_manager.last_audio_path = audio_response.audio_path
+                    
                     # Step 4: Attempt audio playback (Requirement 4.2)
                     try:
                         audio_played = await self.audio_manager.play_in_voice_channel(
