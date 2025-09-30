@@ -1,0 +1,2 @@
+# Database dependencies for SecondShiftAugie Memory System
+asyncpg>=0.29.0
