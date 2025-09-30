@@ -7,6 +7,7 @@ from .stm_store import STMStore, STMError
 from .ltm_store import LTMStore, LTMError
 from .summarizer import Summarizer, SummarizerError
 from .memory_extractor import MemoryExtractor, MemoryExtractorError
+from .memory_service import MemoryService, MemoryServiceError, MemoryMode
 
 __all__ = [
     'ThreadCtx', 'Msg', 'NewMemory', 'MemoryHit', 
@@ -15,5 +16,6 @@ __all__ = [
     'STMStore', 'STMError',
     'LTMStore', 'LTMError',
     'Summarizer', 'SummarizerError',
-    'MemoryExtractor', 'MemoryExtractorError'
+    'MemoryExtractor', 'MemoryExtractorError',
+    'MemoryService', 'MemoryServiceError', 'MemoryMode'
 ]
