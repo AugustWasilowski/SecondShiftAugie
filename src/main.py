@@ -773,9 +773,9 @@ class SecondShiftAugieBot:
         
         @bot.event
         async def on_message(message):
-            """Handle incoming messages with comprehensive error handling and logging.
+            """Handle incoming messages with comprehensive error handling and memory integration.
             
-            Requirements 1.1, 1.2, 2.2, 4.1, 4.2: Enhanced message processing with proper error handling.
+            Requirements 1.1, 1.2, 2.2, 4.1, 4.2, 5.1, 5.5: Enhanced message processing with memory integration.
             """
             message_context = {
                 "message_id": message.id,
@@ -794,7 +794,7 @@ class SecondShiftAugieBot:
                 # Log message processing start (debug level to avoid spam)
                 logger.debug(f"Processing message from {message.author} in {message.channel}: {message.content[:50]}...")
                 
-                # Route message through message router with comprehensive error handling
+                # Integrate memory operations into message handling flow
                 try:
                     # Validate message router is available
                     if not self.message_router:
@@ -802,8 +802,8 @@ class SecondShiftAugieBot:
                         health_monitor.update_component_state("message_processing", ComponentState.FAILED, "Message router not available")
                         return
                     
-                    # Route the message
-                    response = await self.message_router.route_message(message)
+                    # Route the message with memory integration
+                    response = await self._route_message_with_memory(message)
                     
                     # Send response with enhanced error handling and fallback mechanisms
                     if response and response.text_response:
@@ -942,6 +942,333 @@ class SecondShiftAugieBot:
         # Legacy prefix commands have been removed - bot now uses slash commands only
         # All command functionality is available through slash commands:
         # /join, /play, /leave, /help, /health
+    
+    async def _route_message_with_memory(self, message: nextcord.Message):
+        """
+        Route message through the message router with memory integration.
+        
+        Implements memory integration requirements:
+        - 5.1: Add memory operations to message handling flow
+        - 5.5: Implement pre-inference memory retrieval for context building
+        - 5.5: Add post-inference memory extraction and storage
+        - 5.5: Create error handling for memory system failures
+        
+        Args:
+            message: Discord message to process
+            
+        Returns:
+            MessageResponse: Response from message router with memory context
+        """
+        try:
+            # Create thread context for memory operations
+            ctx = None
+            if self.memory_service and message.guild:
+                from src.memory.models import ThreadCtx, Msg
+                ctx = ThreadCtx(
+                    guild_id=str(message.guild.id),
+                    channel_id=str(message.channel.id),
+                    user_id=str(message.author.id)
+                )
+            
+            # Step 1: Store incoming message in STM
+            if ctx and self.memory_service:
+                try:
+                    user_msg = Msg(role='user', content=message.content)
+                    await self.memory_service.append_message(ctx, user_msg)
+                    logger.debug(f"Stored user message in STM for {ctx}")
+                except Exception as e:
+                    logger.warning(f"Failed to store user message in STM: {e}")
+                    # Continue processing - STM failure shouldn't block response
+            
+            # Step 2: Check if summarization is needed
+            if ctx and self.memory_service:
+                try:
+                    summary = await self.memory_service.maybe_summarize(ctx)
+                    if summary:
+                        logger.debug(f"Thread summarized for {ctx}")
+                except Exception as e:
+                    logger.warning(f"Failed to check/perform summarization: {e}")
+                    # Continue processing - summarization failure shouldn't block response
+            
+            # Step 3: Enhance message router with memory context
+            if ctx and self.memory_service:
+                # Pass memory context to message router for enhanced processing
+                response = await self._route_with_memory_context(message, ctx)
+            else:
+                # Fallback to standard routing without memory
+                response = await self.message_router.route_message(message)
+            
+            # Step 4: Store assistant response and extract memories
+            if response and response.text_response and ctx and self.memory_service:
+                try:
+                    # Store assistant response in STM
+                    assistant_msg = Msg(role='assistant', content=response.text_response)
+                    await self.memory_service.append_message(ctx, assistant_msg)
+                    
+                    # Extract and store memories from the conversation exchange
+                    await self._extract_and_store_memories(ctx, message.content, response.text_response)
+                    
+                    logger.debug(f"Stored assistant response and extracted memories for {ctx}")
+                except Exception as e:
+                    logger.warning(f"Failed to store assistant response or extract memories: {e}")
+                    # Don't block response - memory storage failure shouldn't affect user experience
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error in memory-integrated message routing: {e}")
+            # Fallback to standard routing on memory integration failure
+            try:
+                return await self.message_router.route_message(message)
+            except Exception as fallback_error:
+                logger.error(f"Fallback routing also failed: {fallback_error}")
+                raise fallback_error
+    
+    async def _route_with_memory_context(self, message: nextcord.Message, ctx):
+        """
+        Route message with memory context for enhanced responses.
+        
+        Args:
+            message: Discord message to process
+            ctx: Thread context for memory operations
+            
+        Returns:
+            MessageResponse: Enhanced response with memory context
+        """
+        try:
+            # Check if this message should trigger a response (mention or DM)
+            bot_user = self.bot_manager.get_bot_user()
+            is_mentioned = bot_user and bot_user in message.mentions
+            is_dm = isinstance(message.channel, nextcord.DMChannel)
+            
+            if not (is_mentioned or is_dm):
+                # No response needed for non-mention messages
+                from src.bot.message_router import MessageResponse
+                return MessageResponse("", should_play_audio=False)
+            
+            # Pre-inference memory retrieval for context building
+            thread_summary = None
+            recent_messages = []
+            relevant_memories = []
+            
+            try:
+                # Get thread summary
+                thread_summary = await self.memory_service.get_thread_summary(ctx)
+                
+                # Get recent conversation window
+                recent_messages = await self.memory_service.get_recent_window(ctx, n=5)
+                
+                # Retrieve relevant memories using the message content as query
+                relevant_memories = await self.memory_service.retrieve(ctx, message.content, k=6)
+                
+                logger.debug(f"Memory context retrieved: summary={bool(thread_summary)}, "
+                           f"recent={len(recent_messages)}, relevant={len(relevant_memories)}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to retrieve memory context: {e}")
+                # Continue with empty context - memory retrieval failure shouldn't block response
+            
+            # Enhanced message processing with memory context
+            return await self._process_message_with_context(
+                message, ctx, thread_summary, recent_messages, relevant_memories
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in memory context routing: {e}")
+            # Fallback to standard message routing
+            return await self.message_router.route_message(message)
+    
+    async def _process_message_with_context(self, message, ctx, thread_summary, recent_messages, relevant_memories):
+        """
+        Process message with full memory context for enhanced AI responses.
+        
+        Args:
+            message: Discord message
+            ctx: Thread context
+            thread_summary: Thread summary text
+            recent_messages: List of recent messages
+            relevant_memories: List of relevant memory hits
+            
+        Returns:
+            MessageResponse: Enhanced response with memory context
+        """
+        try:
+            # Extract content without bot mention
+            content = message.content
+            bot_user = self.bot_manager.get_bot_user()
+            is_dm = isinstance(message.channel, nextcord.DMChannel)
+            
+            if bot_user and not is_dm:
+                content = content.replace(f"<@{bot_user.id}>", "").strip()
+                content = content.replace(f"<@!{bot_user.id}>", "").strip()
+            
+            if not content:
+                content = "Hello! How can I help you?"
+            
+            # Build enhanced context for AI response
+            enhanced_context = self._build_enhanced_context(
+                content, message.author.display_name, thread_summary, recent_messages, relevant_memories
+            )
+            
+            # Generate response using enhanced context
+            if self.ollama_engine and self.ollama_engine.is_ready():
+                try:
+                    ai_response = await self.ollama_engine.generate_response(content, enhanced_context)
+                    
+                    if ai_response.success:
+                        response_text = ai_response.text
+                    else:
+                        logger.warning(f"AI response generation failed: {ai_response.error_message}")
+                        response_text = self._generate_fallback_response(content, message.author.display_name)
+                except Exception as e:
+                    logger.error(f"Error generating AI response with memory context: {e}")
+                    response_text = self._generate_fallback_response(content, message.author.display_name)
+            else:
+                response_text = self._generate_fallback_response(content, message.author.display_name)
+            
+            # Process through TTS pipeline if needed
+            from src.bot.message_router import MessageResponse
+            
+            should_attempt_audio = (self.tts_engine and self.tts_engine.is_ready() and 
+                                  self.bot_manager.is_in_voice_channel())
+            
+            if should_attempt_audio:
+                try:
+                    audio_response = await self.tts_engine.generate_speech(response_text)
+                    
+                    if audio_response.success and audio_response.audio_path:
+                        self.audio_manager.last_audio_path = audio_response.audio_path
+                        
+                        audio_played = await self.audio_manager.play_in_voice_channel(
+                            self.bot_manager, audio_response.audio_path
+                        )
+                        
+                        return MessageResponse(
+                            text_response=response_text,
+                            audio_response=audio_response,
+                            should_play_audio=audio_played
+                        )
+                    else:
+                        return MessageResponse(
+                            text_response=response_text,
+                            audio_response=audio_response,
+                            should_play_audio=False
+                        )
+                except Exception as e:
+                    logger.error(f"Error in TTS pipeline with memory context: {e}")
+                    return MessageResponse(
+                        text_response=response_text,
+                        audio_response=None,
+                        should_play_audio=False
+                    )
+            
+            return MessageResponse(
+                text_response=response_text,
+                audio_response=None,
+                should_play_audio=False
+            )
+            
+        except Exception as e:
+            logger.error(f"Error processing message with memory context: {e}")
+            # Final fallback
+            from src.bot.message_router import MessageResponse
+            return MessageResponse(
+                text_response="Sorry, I encountered an error processing your message.",
+                audio_response=None,
+                should_play_audio=False
+            )
+    
+    def _build_enhanced_context(self, content, user_name, thread_summary, recent_messages, relevant_memories):
+        """
+        Build enhanced context string for AI response generation.
+        
+        Args:
+            content: User message content
+            user_name: User display name
+            thread_summary: Thread summary text
+            recent_messages: List of recent messages
+            relevant_memories: List of relevant memory hits
+            
+        Returns:
+            str: Enhanced context for AI response generation
+        """
+        context_parts = [
+            f"The user's name is {user_name}.",
+            "Respond in a friendly, conversational manner suitable for voice synthesis.",
+            "Keep responses concise and natural-sounding for text-to-speech conversion."
+        ]
+        
+        # Add thread summary if available
+        if thread_summary:
+            context_parts.append(f"Thread summary: {thread_summary}")
+        
+        # Add relevant memories if available
+        if relevant_memories:
+            memory_context = "Relevant memories:\n"
+            for memory in relevant_memories[:3]:  # Limit to top 3 memories
+                memory_context += f"- {memory.text} (importance: {memory.importance})\n"
+            context_parts.append(memory_context.strip())
+        
+        # Add recent conversation context if available
+        if recent_messages:
+            recent_context = "Recent conversation:\n"
+            for msg in recent_messages[-3:]:  # Last 3 messages
+                role_prefix = "User" if msg.role == "user" else "Assistant"
+                recent_context += f"{role_prefix}: {msg.content[:100]}...\n"
+            context_parts.append(recent_context.strip())
+        
+        return " ".join(context_parts)
+    
+    def _generate_fallback_response(self, content, user_name):
+        """Generate fallback response when AI is unavailable."""
+        content_lower = content.lower()
+        
+        if any(greeting in content_lower for greeting in ["hello", "hi", "hey", "greetings"]):
+            return f"Hello {user_name}! How can I assist you today?"
+        elif any(question in content_lower for question in ["how are you", "how's it going", "what's up"]):
+            return f"I'm doing great, {user_name}! Thanks for asking. How can I help you?"
+        elif any(thanks in content_lower for thanks in ["thank", "thanks", "appreciate"]):
+            return f"You're very welcome, {user_name}! Happy to help."
+        elif any(goodbye in content_lower for goodbye in ["bye", "goodbye", "see you", "farewell"]):
+            return f"Goodbye {user_name}! Have a great day!"
+        else:
+            responses = [
+                f"That's interesting, {user_name}! Tell me more.",
+                f"I understand, {user_name}. What would you like to know?",
+                f"Thanks for sharing that, {user_name}! How can I help?"
+            ]
+            response_index = hash(content) % len(responses)
+            return responses[response_index]
+    
+    async def _extract_and_store_memories(self, ctx, user_content, assistant_response):
+        """
+        Extract and store memories from conversation exchange.
+        
+        Args:
+            ctx: Thread context
+            user_content: User message content
+            assistant_response: Assistant response content
+        """
+        try:
+            if not self.memory_service:
+                return
+            
+            # Create conversation messages for memory extraction
+            from src.memory.models import Msg
+            conversation = [
+                Msg(role='user', content=user_content),
+                Msg(role='assistant', content=assistant_response)
+            ]
+            
+            # Extract and store memories
+            stored_count = await self.memory_service.extract_and_store_memories(ctx, conversation)
+            
+            if stored_count > 0:
+                logger.debug(f"Extracted and stored {stored_count} memories from conversation")
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract and store memories: {e}")
+            # Don't raise - memory extraction failure shouldn't affect user experience
     
     async def start(self) -> bool:
         """Start the bot application with comprehensive error handling.
