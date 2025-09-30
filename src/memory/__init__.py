@@ -6,6 +6,7 @@ from .embedding_client import EmbeddingClient, EmbeddingError, OllamaConnectionE
 from .stm_store import STMStore, STMError
 from .ltm_store import LTMStore, LTMError
 from .summarizer import Summarizer, SummarizerError
+from .memory_extractor import MemoryExtractor, MemoryExtractorError
 
 __all__ = [
     'ThreadCtx', 'Msg', 'NewMemory', 'MemoryHit', 
@@ -13,5 +14,6 @@ __all__ = [
     'EmbeddingClient', 'EmbeddingError', 'OllamaConnectionError', 'EmbeddingTimeoutError',
     'STMStore', 'STMError',
     'LTMStore', 'LTMError',
-    'Summarizer', 'SummarizerError'
+    'Summarizer', 'SummarizerError',
+    'MemoryExtractor', 'MemoryExtractorError'
 ]
