@@ -29,6 +29,13 @@ from .ltm_store import LTMStore, LTMError
 from .embedding_client import EmbeddingClient, EmbeddingError
 from .summarizer import Summarizer, SummarizerError
 from .memory_extractor import MemoryExtractor, MemoryExtractorError
+from .exceptions import (
+    MemorySystemError, MemoryInitializationError, MemoryConnectionError,
+    MemoryDatabaseError, MemoryErrorSeverity
+)
+from .performance_monitor import performance_monitor, monitor_performance, PerformanceTimer
+from .health_checks import health_checker, check_database_health, check_embedding_service_health, check_memory_service_health
+from .recovery_manager import recovery_manager
 
 
 logger = logging.getLogger(__name__)
@@ -95,6 +102,9 @@ class MemoryService:
             start_time = time.time()
             
             try:
+                # Start performance monitoring
+                performance_monitor.start_monitoring()
+                
                 # Check if memory is enabled in configuration
                 if not self.config.memory_enabled:
                     logger.info("Memory system disabled by configuration")
@@ -143,6 +153,14 @@ class MemoryService:
                 elapsed = time.time() - start_time
                 logger.info(f"MemoryService initialization completed in {elapsed:.3f}s (mode: {self.mode.value})")
                 
+                # Register health checks
+                await self._register_health_checks()
+                
+                # Record initialization metrics
+                performance_monitor.record_operation(
+                    "memory_service_initialization", elapsed, True, "memory_service"
+                )
+                
                 self._initialized = True
                 return True
                 
@@ -150,10 +168,27 @@ class MemoryService:
                 elapsed = time.time() - start_time
                 logger.error(f"MemoryService initialization failed after {elapsed:.3f}s: {e}")
                 
-                # Cleanup any partially initialized components
-                await self._cleanup_all()
-                self.mode = MemoryMode.NO_MEMORY
-                self._initialized = True
+                # Record initialization failure
+                performance_monitor.record_operation(
+                    "memory_service_initialization", elapsed, False, "memory_service", e
+                )
+                
+                # Attempt recovery
+                init_error = MemoryInitializationError(
+                    f"Memory service initialization failed: {e}",
+                    failed_component="memory_service"
+                )
+                
+                recovery_success = await recovery_manager.handle_error(
+                    init_error, "memory_service", "initialization"
+                )
+                
+                if not recovery_success:
+                    # Cleanup any partially initialized components
+                    await self._cleanup_all()
+                    self.mode = MemoryMode.NO_MEMORY
+                    self._initialized = True
+                
                 return True  # Return True to allow fallback operation
     
     async def cleanup(self) -> None:
@@ -168,6 +203,7 @@ class MemoryService:
     
     # STM Operations
     
+    @monitor_performance("append_message", "memory_service")
     async def append_message(self, ctx: ThreadCtx, msg: Msg) -> None:
         """
         Append a message to the thread's STM.
@@ -277,6 +313,7 @@ class MemoryService:
     
     # LTM Operations
     
+    @monitor_performance("retrieve_memories", "memory_service")
     async def retrieve(self, ctx: ThreadCtx, query: str, k: int = 6) -> List[MemoryHit]:
         """
         Retrieve relevant memories using hybrid scoring.
@@ -306,6 +343,7 @@ class MemoryService:
             logger.error(f"Failed to retrieve memories: {e}")
             return []
     
+    @monitor_performance("write_memories", "memory_service")
     async def write_memories(self, ctx: ThreadCtx, items: List[NewMemory]) -> None:
         """
         Write new memories to LTM.
@@ -712,6 +750,86 @@ class MemoryService:
                 logger.error(f"Error closing database pool: {e}")
             finally:
                 self.db_pool = None
+    
+    async def _register_health_checks(self) -> None:
+        """Register health checks for memory service components."""
+        try:
+            # Register database health check
+            if self.db_pool:
+                health_checker.register_health_check(
+                    "database",
+                    lambda: check_database_health(self.db_pool),
+                    interval=60.0
+                )
+            
+            # Register embedding service health check
+            if self.embedding_client:
+                health_checker.register_health_check(
+                    "embedding_service",
+                    lambda: check_embedding_service_health(self.embedding_client),
+                    interval=120.0
+                )
+            
+            # Register memory service health check
+            health_checker.register_health_check(
+                "memory_service",
+                lambda: check_memory_service_health(self),
+                interval=300.0
+            )
+            
+            logger.info("Health checks registered for memory service components")
+            
+        except Exception as e:
+            logger.error(f"Failed to register health checks: {e}")
+    
+    async def get_health_status(self) -> Dict[str, Any]:
+        """
+        Get comprehensive health status for the memory system.
+        
+        Returns:
+            Dict containing health status information
+        """
+        try:
+            return await health_checker.get_system_health_summary()
+        except Exception as e:
+            logger.error(f"Failed to get health status: {e}")
+            return {
+                "error": str(e),
+                "timestamp": time.time(),
+                "overall_status": "UNKNOWN"
+            }
+    
+    async def get_performance_metrics(self) -> Dict[str, Any]:
+        """
+        Get performance metrics for the memory system.
+        
+        Returns:
+            Dict containing performance metrics
+        """
+        try:
+            return performance_monitor.get_performance_summary()
+        except Exception as e:
+            logger.error(f"Failed to get performance metrics: {e}")
+            return {
+                "error": str(e),
+                "timestamp": time.time()
+            }
+    
+    def get_degradation_status(self) -> Dict[str, Any]:
+        """
+        Get current system degradation status.
+        
+        Returns:
+            Dict containing degradation information
+        """
+        try:
+            return recovery_manager.get_degradation_status()
+        except Exception as e:
+            logger.error(f"Failed to get degradation status: {e}")
+            return {
+                "error": str(e),
+                "current_level": "unknown"
+            }
     
     def __str__(self) -> str:
         """String representation for logging."""

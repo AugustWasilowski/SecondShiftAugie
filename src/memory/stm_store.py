@@ -20,14 +20,14 @@ from asyncpg import Connection
 
 from .models import ThreadCtx, Msg
 from .config import MemoryConfig
+from .exceptions import (
+    STMError, STMStorageError, STMRetrievalError, STMSummarizationError,
+    STMTokenBudgetError, MemoryDatabaseError
+)
+from .performance_monitor import performance_monitor, monitor_performance, PerformanceTimer
 
 
 logger = logging.getLogger(__name__)
-
-
-class STMError(Exception):
-    """Exception raised when STM operations fail."""
-    pass
 
 
 class STMStore:
@@ -57,6 +57,7 @@ class STMStore:
         
         logger.info(f"Initialized STMStore with max_tokens={self.max_tokens}, keep_last={self.keep_last}")
     
+    @monitor_performance("stm_append_message", "stm")
     async def append_message(self, ctx: ThreadCtx, msg: Msg) -> None:
         """
         Append a message to the thread's STM.
@@ -93,8 +94,14 @@ class STMStore:
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"Failed to append message to {ctx} after {elapsed:.3f}s: {e}")
-            raise STMError(f"Failed to append message: {e}") from e
+            
+            # Classify error and raise appropriate exception
+            if "connection" in str(e).lower():
+                raise STMStorageError(f"Database connection failed: {e}") from e
+            else:
+                raise STMStorageError(f"Failed to append message: {e}") from e
     
+    @monitor_performance("stm_get_recent_window", "stm")
     async def get_recent_window(self, ctx: ThreadCtx, n: int) -> List[Msg]:
         """
         Retrieve the last N messages from the thread.
@@ -144,7 +151,7 @@ class STMStore:
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"Failed to get recent messages from {ctx} after {elapsed:.3f}s: {e}")
-            raise STMError(f"Failed to retrieve recent messages: {e}") from e
+            raise STMRetrievalError(f"Failed to retrieve recent messages: {e}") from e
     
     async def get_thread_summary(self, ctx: ThreadCtx) -> Optional[str]:
         """

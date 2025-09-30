@@ -18,24 +18,18 @@ import aiohttp
 import json
 
 from .config import MemoryConfig
+from .exceptions import (
+    EmbeddingError, EmbeddingConnectionError, EmbeddingTimeoutError,
+    EmbeddingModelError, EmbeddingGenerationError
+)
+from .performance_monitor import performance_monitor, monitor_performance, PerformanceTimer
 
 
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingError(Exception):
-    """Exception raised when embedding operations fail."""
-    pass
-
-
-class OllamaConnectionError(EmbeddingError):
-    """Exception raised when Ollama connection fails."""
-    pass
-
-
-class EmbeddingTimeoutError(EmbeddingError):
-    """Exception raised when embedding operations timeout."""
-    pass
+# Keep backward compatibility aliases
+OllamaConnectionError = EmbeddingConnectionError
 
 
 @dataclass
@@ -153,6 +147,7 @@ class EmbeddingClient:
             logger.warning(f"Health check failed: {e}")
             return False
     
+    @monitor_performance("embed_text", "embedding")
     async def embed_text(self, text: str) -> List[float]:
         """
         Generate embedding for a single text.
@@ -186,6 +181,7 @@ class EmbeddingClient:
             logger.error(f"Failed to generate embedding after {elapsed:.3f}s: {e}")
             raise
     
+    @monitor_performance("embed_batch", "embedding")
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings for multiple texts.
@@ -257,20 +253,20 @@ class EmbeddingClient:
                 logger.warning(f"Embedding request timeout (attempt {attempt + 1}/{self.max_retries + 1})")
                 
             except aiohttp.ClientConnectorError as e:
-                last_exception = OllamaConnectionError(f"Cannot connect to Ollama at {self.base_url}: {e}")
+                last_exception = EmbeddingConnectionError(f"Cannot connect to Ollama at {self.base_url}: {e}")
                 logger.warning(f"Ollama connection failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}")
                 
             except aiohttp.ClientResponseError as e:
                 if e.status >= 500:
                     # Server error - retry
-                    last_exception = EmbeddingError(f"Ollama server error: HTTP {e.status}")
+                    last_exception = EmbeddingGenerationError(f"Ollama server error: HTTP {e.status}")
                     logger.warning(f"Ollama server error (attempt {attempt + 1}/{self.max_retries + 1}): HTTP {e.status}")
                 else:
                     # Client error - don't retry
-                    raise EmbeddingError(f"Ollama client error: HTTP {e.status} - {e.message}")
+                    raise EmbeddingGenerationError(f"Ollama client error: HTTP {e.status} - {e.message}")
                     
             except Exception as e:
-                last_exception = EmbeddingError(f"Unexpected error: {e}")
+                last_exception = EmbeddingGenerationError(f"Unexpected error: {e}")
                 logger.warning(f"Unexpected embedding error (attempt {attempt + 1}/{self.max_retries + 1}): {e}")
             
             # Calculate delay for next retry (exponential backoff with jitter)
@@ -287,7 +283,7 @@ class EmbeddingClient:
         if last_exception:
             raise last_exception
         else:
-            raise EmbeddingError("All embedding retries failed")
+            raise EmbeddingGenerationError("All embedding retries failed")
     
     async def _make_embedding_request(self, text: str) -> EmbeddingResponse:
         """
@@ -317,11 +313,11 @@ class EmbeddingClient:
             
             # Validate response structure
             if 'embedding' not in data:
-                raise EmbeddingError("Invalid response: missing 'embedding' field")
+                raise EmbeddingGenerationError("Invalid response: missing 'embedding' field")
             
             embedding = data['embedding']
             if not isinstance(embedding, list) or not embedding:
-                raise EmbeddingError("Invalid response: 'embedding' must be a non-empty list")
+                raise EmbeddingGenerationError("Invalid response: 'embedding' must be a non-empty list")
             
             return EmbeddingResponse(
                 embedding=embedding,

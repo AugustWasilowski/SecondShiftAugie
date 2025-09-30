@@ -23,14 +23,14 @@ from asyncpg import Connection
 from .models import ThreadCtx, NewMemory, MemoryHit
 from .config import MemoryConfig
 from .embedding_client import EmbeddingClient, EmbeddingError
+from .exceptions import (
+    LTMError, LTMStorageError, LTMRetrievalError, LTMVectorSearchError,
+    LTMHybridSearchError, MemoryDatabaseError
+)
+from .performance_monitor import performance_monitor, monitor_performance, PerformanceTimer
 
 
 logger = logging.getLogger(__name__)
-
-
-class LTMError(Exception):
-    """Exception raised when LTM operations fail."""
-    pass
 
 
 class LTMStore:
@@ -65,6 +65,7 @@ class LTMStore:
         logger.info(f"Initialized LTMStore with top_k={self.top_k}, "
                    f"weights=({self.similarity_weight:.1f}, {self.recency_weight:.1f}, {self.importance_weight:.1f})")
     
+    @monitor_performance("ltm_store_memory", "ltm")
     async def store_memory(self, ctx: ThreadCtx, memory: NewMemory, embedding: Optional[List[float]] = None) -> str:
         """
         Store a memory in LTM with embedding.
@@ -100,7 +101,7 @@ class LTMStore:
                     embedding = await self.embedding_client.embed_text(memory.text)
                 except EmbeddingError as e:
                     logger.error(f"Failed to generate embedding for memory: {e}")
-                    raise LTMError(f"Failed to generate embedding: {e}") from e
+                    raise LTMStorageError(f"Failed to generate embedding: {e}") from e
             
             # Validate embedding
             if not embedding or not isinstance(embedding, list):
@@ -123,7 +124,7 @@ class LTMStore:
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"Failed to store memory for {ctx} after {elapsed:.3f}s: {e}")
-            raise LTMError(f"Failed to store memory: {e}") from e
+            raise LTMStorageError(f"Failed to store memory: {e}") from e
     
     async def vector_search(self, ctx: ThreadCtx, query_embedding: List[float], k: int) -> List[MemoryHit]:
         """
@@ -189,6 +190,7 @@ class LTMStore:
             logger.error(f"Failed vector search for {ctx} after {elapsed:.3f}s: {e}")
             raise LTMError(f"Vector search failed: {e}") from e
     
+    @monitor_performance("ltm_hybrid_search", "ltm")
     async def hybrid_search(self, ctx: ThreadCtx, query: str, k: Optional[int] = None) -> List[MemoryHit]:
         """
         Perform hybrid search with similarity + recency + importance scoring.
@@ -218,7 +220,7 @@ class LTMStore:
                 query_embedding = await self.embedding_client.embed_text(query.strip())
             except EmbeddingError as e:
                 logger.error(f"Failed to generate query embedding: {e}")
-                raise LTMError(f"Failed to generate query embedding: {e}") from e
+                raise LTMHybridSearchError(f"Failed to generate query embedding: {e}") from e
             
             # Perform hybrid search with combined scoring
             async with self.db_pool.acquire() as conn:
@@ -274,7 +276,7 @@ class LTMStore:
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"Failed hybrid search for {ctx} after {elapsed:.3f}s: {e}")
-            raise LTMError(f"Hybrid search failed: {e}") from e
+            raise LTMHybridSearchError(f"Hybrid search failed: {e}") from e
     
     async def delete_memory(self, memory_id: str) -> bool:
         """
