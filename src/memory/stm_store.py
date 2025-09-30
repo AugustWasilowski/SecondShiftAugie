@@ -38,16 +38,18 @@ class STMStore:
     retrieval, token budget tracking, and automatic trimming when limits are exceeded.
     """
     
-    def __init__(self, db_pool: asyncpg.Pool, config: MemoryConfig):
+    def __init__(self, db_pool: asyncpg.Pool, config: MemoryConfig, summarizer=None):
         """
         Initialize the STM store.
         
         Args:
             db_pool: AsyncPG connection pool
             config: Memory configuration
+            summarizer: Optional Summarizer instance for generating summaries
         """
         self.db_pool = db_pool
         self.config = config
+        self.summarizer = summarizer
         
         # Token budget configuration
         self.max_tokens = config.stm_max_tokens
@@ -406,6 +408,123 @@ class STMStore:
             logger.error(f"Failed to get thread stats for {ctx} after {elapsed:.3f}s: {e}")
             raise STMError(f"Failed to get thread stats: {e}") from e
     
+    async def maybe_summarize(self, ctx: ThreadCtx) -> Optional[str]:
+        """
+        Check if summarization is needed and perform it if token budget exceeded.
+        
+        This method implements the core logic for rolling summaries:
+        1. Check if current token usage exceeds the budget
+        2. If yes, generate a summary of recent messages
+        3. Update the thread summary
+        4. Trim old messages, keeping only the last N messages
+        
+        Args:
+            ctx: Thread context for scoping
+            
+        Returns:
+            Optional[str]: Updated summary if summarization occurred, None otherwise
+            
+        Raises:
+            STMError: If summarization process fails
+        """
+        if not ctx:
+            raise STMError("Thread context cannot be None")
+        
+        start_time = time.time()
+        
+        try:
+            # Check current token usage
+            current_tokens = await self.calculate_token_usage(ctx)
+            
+            if current_tokens <= self.max_tokens:
+                logger.debug(f"No summarization needed for {ctx}: {current_tokens} <= {self.max_tokens} tokens")
+                return None
+            
+            logger.info(f"Token budget exceeded for {ctx}: {current_tokens} > {self.max_tokens}, triggering summarization")
+            
+            # Get all messages for summarization
+            all_messages = await self.get_recent_window(ctx, n=1000)  # Get all messages
+            
+            if not all_messages:
+                logger.warning(f"No messages found for summarization in {ctx}")
+                return None
+            
+            # Get existing summary if it exists
+            existing_summary = await self.get_thread_summary(ctx)
+            
+            # Generate new summary
+            if self.summarizer:
+                try:
+                    new_summary = await self.summarizer.generate_summary(
+                        ctx, all_messages, existing_summary
+                    )
+                except Exception as e:
+                    logger.error(f"Summarizer failed for {ctx}: {e}")
+                    # Create fallback summary
+                    new_summary = self._create_emergency_summary(all_messages, existing_summary)
+            else:
+                logger.warning(f"No summarizer available for {ctx}, creating basic summary")
+                new_summary = self._create_emergency_summary(all_messages, existing_summary)
+            
+            # Update the thread summary
+            await self.update_summary(ctx, new_summary)
+            
+            # Trim messages, keeping only the last N messages
+            deleted_count = await self.trim_messages(ctx, self.keep_last)
+            
+            elapsed = time.time() - start_time
+            logger.info(f"Summarization completed for {ctx} in {elapsed:.3f}s: "
+                       f"trimmed {deleted_count} messages, kept last {self.keep_last}")
+            
+            return new_summary
+            
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"Failed to maybe_summarize for {ctx} after {elapsed:.3f}s: {e}")
+            raise STMError(f"Failed to perform summarization: {e}") from e
+    
+    def _create_emergency_summary(self, messages: List[Msg], existing_summary: Optional[str] = None) -> str:
+        """
+        Create an emergency summary when the Summarizer is unavailable.
+        
+        Args:
+            messages: List of messages to summarize
+            existing_summary: Optional existing summary to update
+            
+        Returns:
+            str: Emergency summary text
+        """
+        if not messages:
+            return existing_summary or "Empty conversation"
+        
+        # Count messages by role
+        user_count = sum(1 for msg in messages if msg.role == 'user')
+        assistant_count = sum(1 for msg in messages if msg.role == 'assistant')
+        total_tokens = sum(msg.estimate_tokens() for msg in messages)
+        
+        # Get recent context
+        recent_messages = messages[-5:] if len(messages) > 5 else messages
+        
+        summary_parts = []
+        
+        if existing_summary:
+            summary_parts.append(f"Previous: {existing_summary}")
+            summary_parts.append("")
+        
+        summary_parts.extend([
+            f"• Conversation: {user_count} user, {assistant_count} assistant messages ({total_tokens} tokens)",
+            "• Recent exchange:"
+        ])
+        
+        # Add recent message summaries
+        for msg in recent_messages[-3:]:  # Last 3 messages
+            content_preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
+            summary_parts.append(f"  - {msg.role}: {content_preview}")
+        
+        summary_parts.append("• Summary created in emergency mode")
+        
+        return "\n".join(summary_parts)
+
     async def clear_thread(self, ctx: ThreadCtx) -> Tuple[int, bool]:
         """
         Clear all messages and summary for a thread.
