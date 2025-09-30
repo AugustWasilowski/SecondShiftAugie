@@ -3,9 +3,11 @@
 from .models import ThreadCtx, Msg, NewMemory, MemoryHit
 from .config import MemoryConfig, MemoryConfigError
 from .embedding_client import EmbeddingClient, EmbeddingError, OllamaConnectionError, EmbeddingTimeoutError
+from .stm_store import STMStore, STMError
 
 __all__ = [
     'ThreadCtx', 'Msg', 'NewMemory', 'MemoryHit', 
     'MemoryConfig', 'MemoryConfigError',
-    'EmbeddingClient', 'EmbeddingError', 'OllamaConnectionError', 'EmbeddingTimeoutError'
+    'EmbeddingClient', 'EmbeddingError', 'OllamaConnectionError', 'EmbeddingTimeoutError',
+    'STMStore', 'STMError'
 ]
