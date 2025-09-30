@@ -14,13 +14,14 @@ Requirements addressed:
 """
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import nextcord
 from nextcord.ext import commands
 
 if TYPE_CHECKING:
     from .commands import BotCommands
+    from ..memory.memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +29,28 @@ logger = logging.getLogger(__name__)
 class SlashCommandHandler:
     """Handler for Discord slash commands with delegation to existing BotCommands."""
     
-    def __init__(self, bot: commands.Bot, bot_commands: "BotCommands"):
+    def __init__(self, bot: commands.Bot, bot_commands: "BotCommands", memory_service: Optional["MemoryService"] = None):
         """Initialize slash command handler.
         
         Args:
             bot: Discord bot instance
             bot_commands: Existing BotCommands instance to delegate to
+            memory_service: Optional memory service for memory commands
         """
         self.bot = bot
         self.bot_commands = bot_commands
+        self.memory_service = memory_service
         self._commands_registered = False
+        self._memory_commands = None
+        
+        # Initialize memory commands if service is available
+        if self.memory_service:
+            try:
+                from ..memory.memory_commands import MemoryCommands
+                self._memory_commands = MemoryCommands(bot, memory_service)
+                logger.info("Memory commands initialized")
+            except ImportError as e:
+                logger.warning(f"Could not import memory commands: {e}")
         
         logger.info("SlashCommandHandler initialized")
     
@@ -58,6 +71,14 @@ class SlashCommandHandler:
             self._register_health_command()
             self._register_help_command()
             self._register_reboot_command()
+            
+            # Register memory commands if available
+            if self._memory_commands:
+                try:
+                    self._memory_commands.register_commands()
+                    logger.info("Memory slash commands registered")
+                except Exception as e:
+                    logger.error(f"Failed to register memory commands: {e}")
             
             self._commands_registered = True
             logger.info("All slash commands registered successfully")
@@ -348,6 +369,29 @@ class SlashCommandHandler:
                 ),
                 inline=False
             )
+            
+            # Add memory commands if available
+            if self.memory_service and self.memory_service.is_available():
+                memory_commands_text = (
+                    "`/mem-show` - View your stored memories\n"
+                    "`/mem-find <query>` - Search your memories\n"
+                    "`/mem-export` - Export memories to JSON (via DM)\n"
+                    "`/mem-forget <id>` - Delete a specific memory\n"
+                    "`/forgetme` - ⚠️ Delete ALL your data permanently"
+                )
+                
+                if self.memory_service.supports_ltm():
+                    embed.add_field(
+                        name="🧠 Memory Commands",
+                        value=memory_commands_text,
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="🧠 Memory Commands",
+                        value="Memory system running in limited mode - some commands unavailable",
+                        inline=False
+                    )
             
             # Add current status information including AI
             voice_status = "🟢 Connected" if self.bot_commands.bot_manager.is_in_voice_channel() else "🔴 Not connected"

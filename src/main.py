@@ -52,6 +52,10 @@ from src.utils.error_handler import (
 # Import health monitoring service
 from src.utils.health_monitoring import health_monitoring_service
 
+# Import memory system components
+from src.memory.memory_service import MemoryService
+from src.memory.config import MemoryConfig, MemoryConfigError
+
 
 # Configure logging
 logging.basicConfig(
@@ -73,6 +77,7 @@ class SecondShiftAugieBot:
         self.config: Optional[BotConfig] = None
         self.tts_config: Optional[TTSConfig] = None
         self.ollama_config: Optional[OllamaConfig] = None
+        self.memory_config: Optional[MemoryConfig] = None
         self.tts_engine: Optional[VoxCPMEngine] = None
         self.ollama_engine: Optional[OllamaEngine] = None
         self.system_prompt_manager: Optional[SystemPromptManager] = None
@@ -81,6 +86,7 @@ class SecondShiftAugieBot:
         self.message_router: Optional[MessageRouter] = None
         self.bot_commands: Optional[BotCommands] = None
         self.slash_command_handler: Optional[SlashCommandHandler] = None
+        self.memory_service: Optional[MemoryService] = None
         self._shutdown_event = asyncio.Event()
         self._shutdown_requested = False
         
@@ -218,6 +224,18 @@ class SecondShiftAugieBot:
             
             # Load all configurations with validation
             self.config, self.tts_config, self.ollama_config = config_loader.load_all_configs()
+            
+            # Load memory configuration separately
+            try:
+                self.memory_config = MemoryConfig()
+                logger.info("Memory configuration loaded successfully")
+            except MemoryConfigError as e:
+                logger.warning(f"Memory configuration failed: {e}")
+                logger.info("Memory system will be disabled")
+                self.memory_config = None
+            except Exception as e:
+                logger.error(f"Unexpected error loading memory configuration: {e}")
+                self.memory_config = None
             
             # Log configuration summary
             summary = config_loader.get_validation_summary()
@@ -417,12 +435,40 @@ class SecondShiftAugieBot:
                 degradation_manager.disable_feature("bot_commands", f"Command system error: {str(e)}")
                 # Continue without full command system - basic functionality may still work
             
+            # Initialize memory service
+            logger.info("Initializing memory service...")
+            try:
+                if self.memory_config:
+                    self.memory_service = MemoryService(self.memory_config)
+                    memory_initialized = await self.memory_service.initialize()
+                    
+                    if memory_initialized:
+                        mode = self.memory_service.get_mode()
+                        logger.info(f"Memory service initialized successfully in {mode.value} mode")
+                        health_monitor.update_component_state("memory_service", ComponentState.HEALTHY)
+                        log_component_recovery("memory_service", "initialization")
+                    else:
+                        logger.warning("Memory service initialization failed - continuing without memory features")
+                        health_monitor.update_component_state("memory_service", ComponentState.FAILED)
+                        degradation_manager.disable_feature("memory_system", "Memory service initialization failed")
+                else:
+                    logger.info("Memory configuration not available - memory system disabled")
+                    health_monitor.update_component_state("memory_service", ComponentState.DISABLED)
+                    
+            except Exception as e:
+                log_component_error("memory_service", "initialization", e, ErrorSeverity.MEDIUM)
+                logger.warning(f"Memory service initialization failed: {e}")
+                health_monitor.update_component_state("memory_service", ComponentState.FAILED)
+                degradation_manager.disable_feature("memory_system", f"Memory service error: {str(e)}")
+                # Continue without memory service - not critical for basic bot operation
+            
             # Initialize slash command handler
             logger.info("Initializing slash command handler...")
             try:
                 self.slash_command_handler = SlashCommandHandler(
                     self.bot_manager.bot,
-                    self.bot_commands
+                    self.bot_commands,
+                    self.memory_service  # Pass memory service for memory commands
                 )
                 # Register slash commands (Requirement 3.7: integrate slash command registration)
                 self.slash_command_handler.register_commands()
@@ -1019,6 +1065,11 @@ class SecondShiftAugieBot:
             # Cleanup TTS engine
             if self.tts_engine:
                 await self.tts_engine.cleanup()
+            
+            # Cleanup memory service
+            if self.memory_service:
+                await self.memory_service.cleanup()
+                logger.info("Memory service cleaned up")
             
             # Cleanup audio files and stop queue processor
             if self.audio_manager:
