@@ -265,7 +265,7 @@ class MemoryConfig:
         Check if a memory feature is enabled.
         
         Args:
-            feature: Feature name to check
+            feature: Feature name to check (e.g., 'stm', 'ltm', 'embeddings', 'export')
             
         Returns:
             bool: True if feature is enabled
@@ -273,7 +273,21 @@ class MemoryConfig:
         if not self.memory_enabled:
             return False
         
-        # Add feature-specific checks here if needed
+        # Feature-specific checks
+        feature_checks = {
+            'stm': lambda: True,  # STM always available if memory enabled
+            'ltm': lambda: bool(self.pg_dsn and self.embed_ollama_url),
+            'embeddings': lambda: bool(self.embed_ollama_url and self.embed_model),
+            'export': lambda: bool(self.memory_export_dir),
+            'summarization': lambda: True,  # Available if memory enabled
+            'vector_search': lambda: bool(self.pg_dsn and self.embed_ollama_url),
+        }
+        
+        check_func = feature_checks.get(feature.lower())
+        if check_func:
+            return check_func()
+        
+        # Default: enabled if memory system is enabled
         return True
     
     def get_validation_summary(self) -> Dict[str, Any]:
