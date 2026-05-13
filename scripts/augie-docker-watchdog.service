@@ -1,0 +1,28 @@
+[Unit]
+Description=Fire the watchdog alert when second-shift-augie container dies
+# We don't actually need the docker daemon to be up to install this — the
+# unit just tails `docker events`. But starting after docker.service makes
+# the typical-boot ordering sensible.
+After=docker.service
+
+[Service]
+# Tail docker's event stream filtered to die events on our container, and
+# for each one, post to the existing watchdog n8n webhook via the alert
+# script that's been on disk since the systemd era.
+#
+# The pipe needs `bash -lc` because `docker events --format` output is a
+# stream and we want each match to fire the script. xargs -n1 -I{} runs
+# the alert script once per event line.
+Type=simple
+ExecStart=/bin/bash -lc 'docker events \
+    --filter container=second-shift-augie \
+    --filter event=die \
+    --format "{{.TimeNano}} {{.Status}}" \
+  | while read -r line; do \
+      /home/mayorawesome/.local/bin/second-shift-augie-alert.sh || true; \
+    done'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

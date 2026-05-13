@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "augie-speak": {
+      "type": "stdio",
+      "command": "/home/augie/.venv/bin/python",
+      "args": ["-m", "mcp_bridge.augie_speak"],
+      "env": {
+        "AUGIE_VOICE_API": "http://127.0.0.1:9100"
+      }
+    }
+  }
+}
