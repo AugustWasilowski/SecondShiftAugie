@@ -48,6 +48,15 @@ services:
       # each play; cron sweeps any stragglers (see ops docs).
       - /mnt/storage/shares/augie-tmp:/tmp/augie
     environment:
+      # Two-bot fallback: if a second Discord application's bot token is
+      # provided here, voice.py uses it (so the voice helper has its own
+      # Discord identity, separate from Claude Code's text bot). Set this
+      # in ~/work/SecondShiftAugie/.env, which compose reads automatically.
+      # Unset = voice.py shares the text bot's token, which causes voice
+      # gateway 4006 errors due to dual-IDENTIFY (claude's discord.js
+      # plugin and nextcord both holding main gateway sessions for the
+      # same bot identity).
+      AUGIE_VOICE_BOT_TOKEN: "${AUGIE_VOICE_BOT_TOKEN:-}"
       AUGIE_PIPER_URL: "http://10.0.0.72:5050"
       # Port 9100 is taken on this host by node-exporter; 9876 is free
       # and out of the typical service-port range.

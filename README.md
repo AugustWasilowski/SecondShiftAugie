@@ -164,17 +164,20 @@ You start it back up manually in the morning with `augie on`.
 
 ---
 
-## Two-bot fallback
+## Two-bot fallback (required for voice)
 
-If Discord starts rotating gateway sessions because two processes IDENTIFY with the same token, add a second bot to the same Discord application (or create a second app) and point the voice helper at the new token:
+Single-bot turned out not to work for voice — Discord routes `VOICE_SERVER_UPDATE` non-deterministically when one bot identity has two main gateway sessions (claude's discord.js plugin + nextcord both hold one), leaving voice.py without credentials and triggering WebSocket close `4006`. Solution: a second Discord application whose only job is voice.
 
-```yaml
-# docker-compose.yml
-environment:
-  DISCORD_BOT_TOKEN: "${AUGIE_VOICE_BOT_TOKEN}"   # override the .env-file fallback
-```
+Setup:
 
-`voice/config.py` reads `DISCORD_BOT_TOKEN` from process env first, then from `~/.claude/channels/discord/.env`. Setting it in compose wins — the text bot keeps using the original token, the voice helper uses the new one. Two members in your server, one job each.
+1. **Create a second Discord application** at https://discord.com/developers/applications. Name it whatever — `Second Shift Augie Voice` is what we use. Click *Bot* in the sidebar, enable *Server Members Intent*, then *Reset Token* and copy the token immediately (it's shown only once).
+2. **Invite the bot to your server.** *OAuth2* → *URL Generator*, scopes: `bot`, permissions: `Connect`, `Speak`, `Use Voice Activity`, `View Channels`. Open the generated URL, pick the server, authorize.
+3. **Hand the token to compose** by writing `~/work/SecondShiftAugie/.env`:
+   ```
+   AUGIE_VOICE_BOT_TOKEN=<the token>
+   ```
+   `voice/config.py` checks `AUGIE_VOICE_BOT_TOKEN` first; with it set, voice.py boots as the new bot identity. Claude Code's Discord plugin keeps reading from `~/.claude/channels/discord/.env`, so the text bot is unaffected.
+4. **Restart**: `augie restart`. You'll see two members in your server now — the original Augie does text DMs, the second one joins voice channels.
 
 ---
 

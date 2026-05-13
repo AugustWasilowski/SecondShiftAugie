@@ -23,12 +23,24 @@ DISCORD_ENV_PATH = Path.home() / ".claude" / "channels" / "discord" / ".env"
 
 
 def _read_bot_token() -> str:
-    """Resolve the Discord bot token.
+    """Resolve the Discord bot token for the voice helper.
 
     Order:
-        1. DISCORD_BOT_TOKEN in process env (explicit override).
-        2. DISCORD_BOT_TOKEN inside ~/.claude/channels/discord/.env.
+        1. AUGIE_VOICE_BOT_TOKEN — voice-helper-only override. Use this
+           when running the two-bot pattern: a separate Discord
+           application for voice, distinct from the one Claude Code's
+           Discord plugin uses for text. Solves the dual-IDENTIFY voice
+           gateway 4006 issue (the discord.js plugin and nextcord both
+           open main gateway WSes under one bot identity, and Discord
+           routes VOICE_SERVER_UPDATE to whichever it picks first).
+        2. DISCORD_BOT_TOKEN in process env (legacy / single-bot setup).
+        3. DISCORD_BOT_TOKEN inside ~/.claude/channels/discord/.env
+           (managed by the /discord:configure skill on the host).
     """
+    voice_token = os.environ.get("AUGIE_VOICE_BOT_TOKEN")
+    if voice_token:
+        return voice_token
+
     env_token = os.environ.get("DISCORD_BOT_TOKEN")
     if env_token:
         return env_token
@@ -40,7 +52,8 @@ def _read_bot_token() -> str:
             return token
 
     raise RuntimeError(
-        f"No Discord bot token. Set DISCORD_BOT_TOKEN in env, or run the "
+        f"No Discord bot token. Set AUGIE_VOICE_BOT_TOKEN (recommended for "
+        f"two-bot setup) or DISCORD_BOT_TOKEN in env, or run the "
         f"/discord:configure skill on the host to write {DISCORD_ENV_PATH}."
     )
 
