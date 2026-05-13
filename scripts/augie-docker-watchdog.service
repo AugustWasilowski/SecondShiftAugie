@@ -17,8 +17,9 @@ Type=simple
 ExecStart=/bin/bash -lc 'docker events \
     --filter container=second-shift-augie \
     --filter event=die \
-    --format "{{.TimeNano}} {{.Status}}" \
+    --format "{{.TimeNano}} {{.Action}}" \
   | while read -r line; do \
+      echo "[augie-watchdog] container died: $line" >&2; \
       /home/mayorawesome/.local/bin/second-shift-augie-alert.sh || true; \
     done'
 Restart=on-failure

@@ -40,6 +40,18 @@ RUN usermod -l augie -d /home/augie -m node \
 
 USER augie
 ENV HOME=/home/augie
+
+# Claude Code's "trust this folder?" dialog is keyed on cwd, looked up
+# in ~/.claude.json under projects.<path>.hasTrustDialogAccepted. The
+# host's session has /home/mayorawesome marked as trusted (where the
+# operator's interactive Claude lives), so we run claude from there —
+# the mounted ~/.claude.json carries the trust forward and we don't
+# have to write to the agent's config file. We create the directory
+# empty inside the image; nothing from the host is mounted there.
+USER root
+RUN mkdir -p /home/mayorawesome && chown augie:augie /home/mayorawesome
+USER augie
+
 WORKDIR /home/augie/app
 
 # Single venv shared by the voice helper and the augie-speak MCP server.

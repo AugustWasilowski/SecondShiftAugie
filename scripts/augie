@@ -44,8 +44,8 @@ case "$cmd" in
     docker compose --project-directory "$COMPOSE_DIR" up -d --force-recreate "$@"
     ;;
   health)
-    curl -fsS http://127.0.0.1:9100/health | jq . 2>/dev/null || \
-      curl -fsS http://127.0.0.1:9100/health
+    curl -fsS http://127.0.0.1:9876/health | jq . 2>/dev/null || \
+      curl -fsS http://127.0.0.1:9876/health
     ;;
   -h|--help|help)
     cat <<EOF

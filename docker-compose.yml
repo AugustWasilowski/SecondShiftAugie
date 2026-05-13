@@ -24,6 +24,13 @@ services:
     # directory keeps consistent ownership after writes from inside the
     # container (e.g. the /discord:access skill writes access.json).
     user: "1000:1000"
+    # claude refuses to start without a TTY (it switches to --print
+    # mode and demands stdin input). The systemd Augie dodges this by
+    # wrapping claude in tmux; the cleaner equivalent here is to give
+    # the container its own pty via tty + stdin_open. No human is
+    # attached — Discord events drive claude through the plugin.
+    tty: true
+    stdin_open: true
     volumes:
       # Whole ~/.claude/ is shared bidirectionally:
       #   - Auth: .credentials.json (Claude Code may refresh it)
@@ -42,7 +49,9 @@ services:
       - /mnt/storage/shares/augie-tmp:/tmp/augie
     environment:
       AUGIE_PIPER_URL: "http://10.0.0.72:5050"
-      AUGIE_HTTP_BIND: "127.0.0.1:9100"
+      # Port 9100 is taken on this host by node-exporter; 9876 is free
+      # and out of the typical service-port range.
+      AUGIE_HTTP_BIND: "127.0.0.1:9876"
       AUGIE_LOG_LEVEL: "${AUGIE_LOG_LEVEL:-info}"
       AUGIE_GUILD_ID: "${AUGIE_GUILD_ID:-}"
       AUGIE_IDLE_LEAVE_SECONDS: "${AUGIE_IDLE_LEAVE_SECONDS:-600}"
@@ -56,7 +65,7 @@ services:
         - "-fsS"
         - "-m"
         - "5"
-        - "http://127.0.0.1:9100/health"
+        - "http://127.0.0.1:9876/health"
       interval: 30s
       timeout: 5s
       retries: 3

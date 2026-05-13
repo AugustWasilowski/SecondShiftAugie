@@ -27,7 +27,7 @@ This repo started in 2022 as an Ollama + VoxCPM experiment. It was rebuilt merci
 │  ┌─ entrypoint.sh ─────────────────────────────────────────┐    │
 │  │  bg ► python -m voice           (nextcord gateway #2)    │    │
 │  │  fg ► claude --channels         (Discord plugin GW #1)   │    │
-│  │      └─ stdio MCP: augie-speak  (calls loopback :9100)   │    │
+│  │      └─ stdio MCP: augie-speak  (calls loopback :9876)   │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │        │ Piper HTTP                  │ Discord WebSocket          │
 │        ▼                             ▼                            │
@@ -84,7 +84,7 @@ Environment variables, all optional, with the values used in production:
 | Var | Default | Notes |
 |---|---|---|
 | `AUGIE_PIPER_URL` | `http://10.0.0.72:5050` | Piper HTTP endpoint. JSON POST, WAV back. |
-| `AUGIE_HTTP_BIND` | `127.0.0.1:9100` | Loopback API for the augie-speak MCP server. Don't expose publicly. |
+| `AUGIE_HTTP_BIND` | `127.0.0.1:9876` | Loopback API for the augie-speak MCP server. Don't expose publicly. (9100 is taken on this host by node-exporter.) |
 | `AUGIE_LOG_LEVEL` | `info` | `debug` is chatty but useful. |
 | `AUGIE_GUILD_ID` | _(unset)_ | If set, slash commands register instantly to that guild. Without it, expect up to ~1h Discord propagation on first deploy. |
 | `AUGIE_IDLE_LEAVE_SECONDS` | `600` | Not yet implemented; reserved. |
