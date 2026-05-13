@@ -53,7 +53,10 @@ services:
       # and out of the typical service-port range.
       AUGIE_HTTP_BIND: "127.0.0.1:9876"
       AUGIE_LOG_LEVEL: "${AUGIE_LOG_LEVEL:-info}"
-      AUGIE_GUILD_ID: "${AUGIE_GUILD_ID:-}"
+      # Pinned to "Big Shoulder Games" — Augie only ever lives in that one
+      # server. Guild-scoped slash command registration shows up instantly
+      # there instead of waiting on Discord's ~1h global propagation.
+      AUGIE_GUILD_ID: "${AUGIE_GUILD_ID:-1100479478112735352}"
       AUGIE_IDLE_LEAVE_SECONDS: "${AUGIE_IDLE_LEAVE_SECONDS:-600}"
       AUGIE_TMPDIR: "/tmp/augie"
       # If host has a TZ preference, honor it (for log timestamps).
