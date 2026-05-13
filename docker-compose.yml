@@ -1,0 +1,90 @@
+# Second Shift Augie — one container, text + voice, restart unless-stopped.
+#
+# Boot:    augie on        (wraps `docker compose up -d`)
+# Stop:    augie off       (wraps `docker compose stop`)
+# Logs:    augie log
+# Shell:   augie attach
+
+services:
+  augie:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: second-shift-augie:latest
+    container_name: second-shift-augie
+    restart: unless-stopped
+    # Host networking is the path of least resistance:
+    #   - 10.0.0.72:5050 (Piper) just works
+    #   - 10.0.0.72:8123 (Home Assistant MCP) just works
+    #   - localhost:4000 (n8n) just works (matches the hairpin recipe in
+    #     n8n_self_call_hairpin.md)
+    #   - voice helper's 127.0.0.1:9100 stays loopback-only
+    network_mode: host
+    # Same UID as the host operator so the bind-mounted ~/.claude/
+    # directory keeps consistent ownership after writes from inside the
+    # container (e.g. the /discord:access skill writes access.json).
+    user: "1000:1000"
+    # claude refuses to start without a TTY (it switches to --print
+    # mode and demands stdin input). The systemd Augie dodges this by
+    # wrapping claude in tmux; the cleaner equivalent here is to give
+    # the container its own pty via tty + stdin_open. No human is
+    # attached — Discord events drive claude through the plugin.
+    tty: true
+    stdin_open: true
+    volumes:
+      # Whole ~/.claude/ is shared bidirectionally:
+      #   - Auth: .credentials.json (Claude Code may refresh it)
+      #   - Settings: settings.json (model, enabled plugins)
+      #   - MCP defs: ~/.claude.json — see separate mount below
+      #   - Plugin cache: plugins/ — discord@claude-plugins-official lives here
+      #   - Channel state: channels/discord/ — bot token, access.json, inbox
+      #   - Project session log: projects/-home-mayorawesome/...
+      - ${HOME}/.claude:/home/augie/.claude
+      # ~/.claude.json lives one level up from ~/.claude/ on the host;
+      # bring it along.
+      - ${HOME}/.claude.json:/home/augie/.claude.json
+      # Scratch dir for synthesized WAVs. On the big USB drive so we
+      # don't pressure the boot drive. Cleaned up by audio_queue after
+      # each play; cron sweeps any stragglers (see ops docs).
+      - /mnt/storage/shares/augie-tmp:/tmp/augie
+    environment:
+      # Two-bot fallback: if a second Discord application's bot token is
+      # provided here, voice.py uses it (so the voice helper has its own
+      # Discord identity, separate from Claude Code's text bot). Set this
+      # in ~/work/SecondShiftAugie/.env, which compose reads automatically.
+      # Unset = voice.py shares the text bot's token, which causes voice
+      # gateway 4006 errors due to dual-IDENTIFY (claude's discord.js
+      # plugin and nextcord both holding main gateway sessions for the
+      # same bot identity).
+      AUGIE_VOICE_BOT_TOKEN: "${AUGIE_VOICE_BOT_TOKEN:-}"
+      AUGIE_PIPER_URL: "http://10.0.0.72:5050"
+      # Port 9100 is taken on this host by node-exporter; 9876 is free
+      # and out of the typical service-port range.
+      AUGIE_HTTP_BIND: "127.0.0.1:9876"
+      AUGIE_LOG_LEVEL: "${AUGIE_LOG_LEVEL:-info}"
+      # Pinned to "Big Shoulder Games" — Augie only ever lives in that one
+      # server. Guild-scoped slash command registration shows up instantly
+      # there instead of waiting on Discord's ~1h global propagation.
+      AUGIE_GUILD_ID: "${AUGIE_GUILD_ID:-1100479478112735352}"
+      AUGIE_IDLE_LEAVE_SECONDS: "${AUGIE_IDLE_LEAVE_SECONDS:-600}"
+      AUGIE_TMPDIR: "/tmp/augie"
+      # If host has a TZ preference, honor it (for log timestamps).
+      TZ: "${TZ:-America/Chicago}"
+    healthcheck:
+      test:
+        - "CMD"
+        - "curl"
+        - "-fsS"
+        - "-m"
+        - "5"
+        - "http://127.0.0.1:9876/health"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 15s

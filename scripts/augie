@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Convenience wrapper around `docker compose` for Second Shift Augie.
+# Drop-in replacement for the systemctl-based augie that ran before
+# 2026-05-13. Same verbs, same muscle memory.
+
+set -euo pipefail
+
+COMPOSE_DIR="${AUGIE_COMPOSE_DIR:-$HOME/work/SecondShiftAugie}"
+CONTAINER="second-shift-augie"
+
+if [[ ! -f "$COMPOSE_DIR/docker-compose.yml" ]]; then
+  echo "augie: no docker-compose.yml at $COMPOSE_DIR" >&2
+  echo "  set AUGIE_COMPOSE_DIR if the repo is elsewhere." >&2
+  exit 2
+fi
+
+cmd="${1:-status}"
+shift || true
+
+case "$cmd" in
+  on|up|start)
+    docker compose --project-directory "$COMPOSE_DIR" up -d "$@"
+    ;;
+  off|down|stop)
+    docker compose --project-directory "$COMPOSE_DIR" stop "$@"
+    ;;
+  restart)
+    docker compose --project-directory "$COMPOSE_DIR" restart "$@"
+    ;;
+  status|ps)
+    docker compose --project-directory "$COMPOSE_DIR" ps
+    ;;
+  log|logs)
+    docker compose --project-directory "$COMPOSE_DIR" logs -f --tail="${1:-200}"
+    ;;
+  attach|shell|exec)
+    docker exec -it "$CONTAINER" bash
+    ;;
+  build)
+    docker compose --project-directory "$COMPOSE_DIR" build "$@"
+    ;;
+  rebuild)
+    docker compose --project-directory "$COMPOSE_DIR" build --no-cache "$@"
+    docker compose --project-directory "$COMPOSE_DIR" up -d --force-recreate "$@"
+    ;;
+  health)
+    curl -fsS http://127.0.0.1:9876/health | jq . 2>/dev/null || \
+      curl -fsS http://127.0.0.1:9876/health
+    ;;
+  -h|--help|help)
+    cat <<EOF
+augie — Second Shift Augie control wrapper
+
+  augie on        start the container (detached)
+  augie off       stop the container
+  augie restart   restart the container
+  augie status    show running state
+  augie log       follow logs (Ctrl+C to exit)
+  augie attach    open a shell inside the container
+  augie health    hit the voice helper's /health endpoint
+  augie build     rebuild the image
+  augie rebuild   rebuild from scratch + force-recreate
+
+Environment:
+  AUGIE_COMPOSE_DIR   path to the compose project (default: ~/work/SecondShiftAugie)
+EOF
+    ;;
+  *)
+    echo "augie: unknown command '$cmd' (try: augie help)" >&2
+    exit 2
+    ;;
+esac

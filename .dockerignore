@@ -1,0 +1,23 @@
+.git
+.github
+.gitignore
+.dockerignore
+README.md
+LICENSE
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Editor
+.idea/
+.vscode/
+
+# Local secrets — Docker mounts these from the host at runtime,
+# never bake them into the image.
+.env
+.env.local
